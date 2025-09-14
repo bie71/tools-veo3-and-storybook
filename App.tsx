@@ -259,18 +259,44 @@ const App: React.FC = () => {
         </div>
     );
     
-    const renderSelect = <T extends string,>(label: string, value: T, onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void, options: readonly T[]) => (
-        <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
-            <select value={value} onChange={onChange} className="appearance-none w-full bg-gray-200/50 dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500">
-                {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-            </select>
-        </div>
-    );
+    const renderSelect = <T extends string,>(label: string, value: T, onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void, options: readonly T[]) => {
+        const isCustom = !options.includes(value);
+        const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+            const v = e.target.value as T | '__custom__';
+            if (v === '__custom__') {
+                // Switch to custom mode: clear current value to trigger input
+                (onChange as any)({ target: { value: '' } });
+                return;
+            }
+            onChange(e);
+        };
+        return (
+            <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
+                <select
+                    value={isCustom ? ('__custom__' as any) : value}
+                    onChange={handleSelectChange}
+                    className="appearance-none w-full bg-gray-200/50 dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
+                >
+                    {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    <option value="__custom__">Custom…</option>
+                </select>
+                {isCustom && (
+                    <input
+                        type="text"
+                        value={value as string}
+                        onChange={(e) => (onChange as any)({ target: { value: e.target.value } })}
+                        placeholder={`Custom ${label}`}
+                        className="mt-2 w-full bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    />
+                )}
+            </div>
+        );
+    };
 
     return (
         <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-sans bg-gradient-to-br from-gray-100 to-indigo-100 dark:from-gray-900 dark:via-gray-900 dark:to-indigo-900/50 transition-colors duration-300">
-            <header className="bg-white/50 dark:bg-gray-800/50 backdrop-blur-sm sticky top-0 z-10 border-b border-gray-300 dark:border-gray-700">
+            <header className="bg-white/50 dark:bg-gray-800/50 backdrop-blur-sm sticky top-0 z-10">
                 <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4">
                    <div className="flex flex-wrap justify-between items-center gap-4">
                         <div>

@@ -105,19 +105,37 @@ const StorybookBuilder: React.FC<StorybookBuilderProps> = ({ apiKey }) => {
         }
     };
 
-    const renderSelect = (label: string, value: string, onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void, options: readonly string[]) => (
-        <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
-            <select 
-                value={value} 
-                onChange={onChange}
-                className="appearance-none w-full bg-gray-200/50 dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
-                aria-label={label}
-            >
-                {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-            </select>
-        </div>
-    );
+    const renderSelect = (label: string, value: string, onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void, options: readonly string[]) => {
+        const isCustom = !options.includes(value);
+        const onSel = (e: React.ChangeEvent<HTMLSelectElement>) => {
+            const v = e.target.value as string;
+            if (v === '__custom__') return (onChange as any)({ target: { value: '' } });
+            onChange(e);
+        };
+        return (
+            <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
+                <select 
+                    value={isCustom ? '__custom__' : value}
+                    onChange={onSel}
+                    className="appearance-none w-full bg-gray-200/50 dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    aria-label={label}
+                >
+                    {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    <option value="__custom__">Custom…</option>
+                </select>
+                {isCustom && (
+                    <input
+                        type="text"
+                        value={value}
+                        onChange={(e) => (onChange as any)({ target: { value: e.target.value } })}
+                        placeholder={`Custom ${label}`}
+                        className="mt-2 w-full bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    />
+                )}
+            </div>
+        );
+    };
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
