@@ -26,7 +26,10 @@ const StorybookPromptGenerator: React.FC = () => {
         },
         plotPoints: []
     });
-    const [generatedPrompt, setGeneratedPrompt] = useState('');
+    const [generatedPrompts, setGeneratedPrompts] = useState({
+        english: '',
+        indonesian: ''
+    });
 
     const updateField = (section: keyof StoryPromptData, field: string, value: string) => {
         setPromptData(prev => ({
@@ -70,32 +73,61 @@ const StorybookPromptGenerator: React.FC = () => {
         const location = setting.location === 'Other (Custom)' ? (promptData.setting as any).customLocation : setting.location;
         const atmosphere = setting.atmosphere === 'Other (Custom)' ? (promptData.setting as any).customAtmosphere : setting.atmosphere;
         
-        let prompt = `Create a children's storybook for ${ageGroup} in a ${artStyle} art style.`;
+        // English prompt
+        let promptEn = `Create a children's storybook for ${ageGroup} in a ${artStyle} art style.`;
         if (moral) {
-            prompt += ` The story should teach a lesson about ${moral}.`;
+            promptEn += ` The story should teach a lesson about ${moral}.`;
         }
-        prompt += `\n\n**Story Idea:**\n${idea || 'A central theme or concept for the story.'}`;
-        
-        prompt += `\n\n**Main Character:**`;
-        prompt += `\n- Name: ${character.name || 'Not specified'}`;
-        prompt += `\n- Species/Type: ${species || 'Not specified'}`;
-        prompt += `\n- Appearance: ${character.appearance || 'Not specified'}`;
-        prompt += `\n- Personality: ${personality || 'Not specified'}`;
-        prompt += `\n- Goal/Desire: ${character.goal || 'Not specified'}`;
-        
-        prompt += `\n\n**Setting:**`;
-        prompt += `\n- Location: ${location || 'Not specified'}`;
-        prompt += `\n- Atmosphere: ${atmosphere || 'Not specified'}`;
-        
+        promptEn += `\n\n**Story Idea:**\n${idea || 'A central theme or concept for the story.'}`;
+
+        promptEn += `\n\n**Main Character:**`;
+        promptEn += `\n- Name: ${character.name || 'Not specified'}`;
+        promptEn += `\n- Species/Type: ${species || 'Not specified'}`;
+        promptEn += `\n- Appearance: ${character.appearance || 'Not specified'}`;
+        promptEn += `\n- Personality: ${personality || 'Not specified'}`;
+        promptEn += `\n- Goal/Desire: ${character.goal || 'Not specified'}`;
+
+        promptEn += `\n\n**Setting:**`;
+        promptEn += `\n- Location: ${location || 'Not specified'}`;
+        promptEn += `\n- Atmosphere: ${atmosphere || 'Not specified'}`;
+
         if (plotPoints.length > 0) {
-            prompt += `\n\n**Plot Outline:**`;
+            promptEn += `\n\n**Plot Outline:**`;
             plotPoints.forEach((p, i) => {
-                if (p.text) prompt += `\n${i + 1}. ${p.text}`;
+                if (p.text) promptEn += `\n${i + 1}. ${p.text}`;
             });
         }
-        
-        prompt += `\n\nPlease generate the story text broken down into multiple pages, and for each page, provide a detailed illustration prompt that matches the text and the overall art style.`;
-        setGeneratedPrompt(prompt);
+
+        promptEn += `\n\nPlease generate the story text broken down into multiple pages, and for each page, provide a detailed illustration prompt that matches the text and the overall art style.`;
+
+        // Indonesian prompt
+        let promptId = `Buat buku cerita anak untuk ${ageGroup} dengan gaya seni ${artStyle}.`;
+        if (moral) {
+            promptId += ` Cerita harus menyampaikan pelajaran tentang ${moral}.`;
+        }
+        promptId += `\n\n**Ide Cerita:**\n${idea || 'Tema atau gagasan utama cerita.'}`;
+
+        promptId += `\n\n**Tokoh Utama:**`;
+        promptId += `\n- Nama: ${character.name || 'Tidak disebutkan'}`;
+        promptId += `\n- Spesies/Tipe: ${species || 'Tidak disebutkan'}`;
+        promptId += `\n- Penampilan: ${character.appearance || 'Tidak disebutkan'}`;
+        promptId += `\n- Kepribadian: ${personality || 'Tidak disebutkan'}`;
+        promptId += `\n- Tujuan/Keinginan: ${character.goal || 'Tidak disebutkan'}`;
+
+        promptId += `\n\n**Latar:**`;
+        promptId += `\n- Lokasi: ${location || 'Tidak disebutkan'}`;
+        promptId += `\n- Suasana: ${atmosphere || 'Tidak disebutkan'}`;
+
+        if (plotPoints.length > 0) {
+            promptId += `\n\n**Alur Cerita:**`;
+            plotPoints.forEach((p, i) => {
+                if (p.text) promptId += `\n${i + 1}. ${p.text}`;
+            });
+        }
+
+        promptId += `\n\nMohon hasilkan teks cerita yang dibagi menjadi beberapa halaman, dan untuk setiap halaman, berikan prompt ilustrasi yang detail yang sesuai dengan teks dan gaya seni keseluruhan.`;
+
+        setGeneratedPrompts({ english: promptEn, indonesian: promptId });
     }, [promptData]);
 
     useEffect(() => {
@@ -182,11 +214,12 @@ const StorybookPromptGenerator: React.FC = () => {
 
             {/* OUTPUT COLUMN */}
             <div className="sticky top-[150px] h-fit">
-                {generatedPrompt ? (
-                     <div className="h-[calc(100vh-180px)]">
-                        <OutputBlock title="Generated Storybook Prompt" content={generatedPrompt} />
+                {generatedPrompts.english || generatedPrompts.indonesian ? (
+                     <div className="flex flex-col gap-6">
+                        <div className="h-[300px]"><OutputBlock title="Storybook Prompt (Indonesian)" content={generatedPrompts.indonesian} /></div>
+                        <div className="h-[300px]"><OutputBlock title="Storybook Prompt (English)" content={generatedPrompts.english} /></div>
                     </div>
-                ): (
+                ) : (
                      <div className="text-center text-gray-400 dark:text-gray-500 m-auto p-8 bg-white/50 dark:bg-gray-800/50 border border-gray-300 dark:border-gray-700 rounded-lg">
                         <QuillIcon />
                         <p className="mt-2">Your generated story prompt will appear here.</p>

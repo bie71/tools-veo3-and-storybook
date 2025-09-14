@@ -2,10 +2,25 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/svg+xml" href="/public/veo3.svg" sizes="any" />
+    <link rel="shortcut icon" type="image/svg+xml" href="/public/veo3.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>VEO3 Prompt Generator</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // Apply saved theme ASAP to avoid FOUC and override system
+      (function () {
+        try {
+          var stored = localStorage.getItem('theme');
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var initial = stored || (prefersDark ? 'dark' : 'light');
+          if (initial === 'dark') {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
+        } catch (e) { /* noop */ }
+      })();
+    </script>
     <style>
       body {
         -ms-overflow-style: none; /* IE and Edge */

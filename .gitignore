@@ -1,0 +1,55 @@
+###############################
+# Node / Vite / TypeScript
+###############################
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+.vite/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing / coverage
+coverage/
+.nyc_output/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Caches
+.cache/
+.eslintcache
+.stylelintcache
+
+# Storybook
+storybook-static/
+.storybook-out/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor folders
+.vscode/
+.idea/
+
+# Misc
+.node_repl_history
+*.swp
+*.swo

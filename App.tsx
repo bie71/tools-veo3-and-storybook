@@ -20,7 +20,7 @@ const getInitialTheme = (): Theme => {
   if (storedTheme) {
     return storedTheme;
   }
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; // follow system default
 };
 
 
@@ -59,9 +59,20 @@ const App: React.FC = () => {
     }, [theme]);
 
     const toggleTheme = () => {
-        setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
+        setTheme(prevTheme => {
+            const newTheme = prevTheme === 'light' ? 'dark' : 'light';
+            localStorage.setItem('theme', newTheme); // Store the new theme
+            return newTheme;
+        });
     };
 
+    // Hint developers to install React DevTools (dev only)
+    useEffect(() => {
+        if (import.meta?.env?.DEV) {
+            // eslint-disable-next-line no-console
+            console.info('Download the React DevTools for a better development experience: https://react.dev/link/react-devtools');
+        }
+    }, []);
 
     useEffect(() => {
         const storedApiKey = localStorage.getItem('gemini_api_key');
@@ -286,8 +297,18 @@ const App: React.FC = () => {
                                 {apiKeyFeedback && <p className={`text-sm mt-1 ${apiKeyFeedback.includes('cleared') || apiKeyFeedback.includes('empty') ? 'text-yellow-600 dark:text-yellow-400' : 'text-green-600 dark:text-green-400'}`}>{apiKeyFeedback}</p>}
                             </div>
                             <button onClick={toggleTheme} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors mt-6" aria-label="Toggle theme">
-                                {theme === 'light' ? <MoonIcon /> : <SunIcon />}
+                                {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
                             </button>
+                            {import.meta?.env?.DEV && (
+                                <a
+                                    href="https://react.dev/link/react-devtools"
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="mt-6 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                                >
+                                    React DevTools
+                                </a>
+                            )}
                         </div>
                    </div>
                      <nav className="mt-4 border-b border-gray-300 dark:border-gray-700">

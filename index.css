@@ -1,0 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* App-specific tweaks if needed */
+/* html { scroll-behavior: smooth; } */
+
