@@ -1,0 +1,5 @@
+{
+  "name": "VEO3 Prompt Generator",
+  "description": "An advanced prompt generator for the VEO3 text-to-video model. Create complex scenes by defining characters, dialogues, and camera settings to generate detailed prompts in multiple formats.",
+  "requestFramePermissions": []
+}
