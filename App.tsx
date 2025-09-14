@@ -262,7 +262,7 @@ const App: React.FC = () => {
     const renderSelect = <T extends string,>(label: string, value: T, onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void, options: readonly T[]) => (
         <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
-            <select value={value} onChange={onChange} className="w-full bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500">
+            <select value={value} onChange={onChange} className="appearance-none w-full bg-gray-200/50 dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500">
                 {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
             </select>
         </div>

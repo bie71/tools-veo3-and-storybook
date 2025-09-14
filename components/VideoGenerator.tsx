@@ -158,7 +158,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
             <select 
                 value={value} 
                 onChange={onChange}
-                className="w-full bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
+                className="appearance-none w-full bg-gray-200/50 dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
                 aria-label={label}
             >
                 {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
@@ -185,7 +185,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
                                     setVideoModel(v);
                                 }
                             }}
-                            className="w-full bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
+                            className="appearance-none w-full bg-gray-200/50 dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
                             aria-label="Video Model"
                         >
                             {VIDEO_MODELS.map(opt => (
