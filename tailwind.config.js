@@ -3,11 +3,11 @@ export default {
   darkMode: 'class',
   content: [
     './index.html',
-    './**/*.{ts,tsx,js,jsx}',
+    './*.{js,ts,jsx,tsx}',
+    './components/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
     extend: {},
   },
   plugins: [],
 };
-

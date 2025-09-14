@@ -10,6 +10,7 @@ interface VideoGeneratorProps {
 
 const ASPECT_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"];
 const AI_MODES = ['Cinematic', 'Realistic', 'Animated', 'Documentary', 'Vlog', 'Surreal'];
+const VIDEO_MODELS = ['veo-3.0-generate-001', 'veo-2.0-generate-001'];
 
 
 const fileToBase64 = (file: File): Promise<string> => {
@@ -27,6 +28,9 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
     const [aspectRatio, setAspectRatio] = useState(ASPECT_RATIOS[0]);
     const [enableAudio, setEnableAudio] = useState(true);
     const [aiMode, setAiMode] = useState(AI_MODES[0]);
+    const [videoModel, setVideoModel] = useState(VIDEO_MODELS[0]); // Default to the latest model
+    const [useCustomModel, setUseCustomModel] = useState(false);
+    const [customModelId, setCustomModelId] = useState('');
     const [characterStyle, setCharacterStyle] = useState(CHARACTER_STYLES[0]);
     const [imageFile, setImageFile] = useState<File | null>(null);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -67,6 +71,10 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
             setError('Please enter a prompt.');
             return;
         }
+        if (useCustomModel && !customModelId.trim()) {
+            setError('Please enter a custom model ID or switch to a preset model.');
+            return;
+        }
         setIsLoading(true);
         setError(null);
         setGeneratedVideoUrl(null);
@@ -96,8 +104,9 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
             const fullPrompt = `${prompt}. ${promptAdditions.join(', ')}.`;
 
             setStatusMessage('Sending request to VEO model...');
+            const modelId = useCustomModel && customModelId.trim() ? customModelId.trim() : videoModel;
             let operation = await ai.models.generateVideos({
-              model: 'veo-2.0-generate-001',
+              model: modelId,
               prompt: fullPrompt,
               image: imagePayload,
               config: {
@@ -161,17 +170,51 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* INPUTS COLUMN */}
             <div className="flex flex-col space-y-6">
-                 <InputGroup title="Video Prompt & Settings">
+                <InputGroup title="Video Prompt & Settings">
+                    {/* Video Model at top for visibility */}
+                    <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Video Model</label>
+                        <select
+                            value={useCustomModel ? '__custom__' : videoModel}
+                            onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === '__custom__') {
+                                    setUseCustomModel(true);
+                                } else {
+                                    setUseCustomModel(false);
+                                    setVideoModel(v);
+                                }
+                            }}
+                            className="w-full bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
+                            aria-label="Video Model"
+                        >
+                            {VIDEO_MODELS.map(opt => (
+                                <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                            <option value="__custom__">Custom…</option>
+                        </select>
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Select Veo model (e.g., veo-3.0). Choose “Custom…” to type another model ID.</p>
+                        {useCustomModel && (
+                            <input
+                                type="text"
+                                value={customModelId}
+                                onChange={(e) => setCustomModelId(e.target.value)}
+                                placeholder="Enter model ID, e.g., veo-3.0-generate-001"
+                                className="mt-2 w-full bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                aria-label="Custom Model ID"
+                            />
+                        )}
+                    </div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Prompt</label>
                     <textarea 
                         value={prompt}
                         onChange={e => setPrompt(e.target.value)}
                         placeholder="e.g., A neon hologram of a cat driving at top speed"
-                        className="w-full bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
-                        rows={4}
+                        className="w-full bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500 resize-y min-h-64"
+                        rows={12}
                         aria-label="Video Prompt"
                     />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
                         {renderSelect('AI Mode', aiMode, e => setAiMode(e.target.value), AI_MODES)}
                         {renderSelect('Character Style', characterStyle, e => setCharacterStyle(e.target.value), CHARACTER_STYLES)}
                         <div>
@@ -235,8 +278,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
                     {isLoading ? <><LoaderIcon /> <span className="ml-2">Generating...</span></> : 'Generate Video'}
                 </button>
             </div>
-
-            {/* OUTPUT COLUMN */}
+            {/* OUTPUT COLUMN (side-by-side on desktop, stacked on mobile) */}
             <div className="sticky top-[150px] h-fit flex flex-col justify-center items-center bg-white/50 dark:bg-gray-800/50 border border-gray-300 dark:border-gray-700 rounded-lg p-4 min-h-[400px] backdrop-blur-sm">
                 {isLoading ? (
                     <div className="text-center" role="status" aria-live="polite">
