@@ -178,9 +178,9 @@ const StorybookBuilder: React.FC<StorybookBuilderProps> = ({ apiKey }) => {
                         <p className="text-indigo-600 dark:text-indigo-400 mt-4">{statusMessage}</p>
                     </div>
                 ) : error ? (
-                    <div className="w-full p-4 m-auto bg-red-100 dark:bg-red-900/50 border border-red-300 dark:border-red-700 text-red-700 dark:text-red-300 rounded-lg break-words max-h-48 overflow-auto" role="alert">
+                    <div className="w-full p-4 m-auto bg-red-100 dark:bg-red-900/50 border border-red-300 dark:border-red-700 text-red-700 dark:text-red-300 rounded-lg break-words max-h-48 overflow-auto overflow-x-hidden" role="alert">
                         <p className="font-bold text-center">Error</p>
-                        <p className="text-center mt-2 break-words whitespace-pre-wrap">{error}</p>
+                        <p className="text-center mt-2 break-words break-all whitespace-pre-wrap w-full max-w-full">{error}</p>
                     </div>
                 ) : storyPages.length > 0 ? (
                      <div className="w-full space-y-6">
