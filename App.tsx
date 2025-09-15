@@ -5,11 +5,12 @@ import InputGroup from './components/InputGroup';
 import OutputBlock from './components/OutputBlock';
 import { PlusIcon, TrashIcon, SunIcon, MoonIcon } from './components/icons';
 import VideoGenerator from './components/VideoGenerator';
+import ImageGenerator from './components/ImageGenerator';
 import StorybookBuilder from './components/StorybookBuilder';
 import StorybookPromptGenerator from './components/StorybookPromptGenerator';
 import { trackEvent, trackPageView } from './analytics';
 
-type Tab = 'prompt' | 'video' | 'storybook' | 'storybook_prompt';
+type Tab = 'prompt' | 'image' | 'video' | 'storybook' | 'storybook_prompt';
 type Theme = 'light' | 'dark';
 
 // Function to determine the initial theme to prevent flash of incorrect theme
@@ -23,6 +24,55 @@ const getInitialTheme = (): Theme => {
   }
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; // follow system default
 };
+
+// Preset choices for Video Prompt Gen with Custom fallback via renderSelect
+const OUTFITS = [
+  'Casual (t-shirt and jeans)',
+  'Formal suit',
+  'Business casual',
+  'Leather jacket and jeans',
+  'Hoodie and sneakers',
+  'Traditional attire',
+  'Streetwear',
+  'Athleisure',
+  'Armor',
+  'Sci-fi suit',
+  'Fantasy robes',
+] as const;
+
+const HAIRSTYLES = [
+  'Short',
+  'Medium',
+  'Long',
+  'Curly',
+  'Wavy',
+  'Straight',
+  'Ponytail',
+  'Bun',
+  'Braids',
+  'Mohawk',
+  'Undercut',
+  'Bald',
+] as const;
+
+const AGES = [
+  '8','12','16','18','20','22','25','28','30','35','40','45','50','60'
+] as const;
+
+const OTHER_VEO_OPTIONS = [
+  'hyper-realistic',
+  'cinematic',
+  '8k',
+  'HDR',
+  'anamorphic',
+  'slow motion',
+  'shallow depth of field',
+  'volumetric lighting',
+  'handheld camera',
+  'steadycam',
+  'bokeh',
+  'high contrast',
+] as const;
 
 
 const TabButton: React.FC<{ title: string; active: boolean; onClick: () => void; }> = ({ title, active, onClick }) => (
@@ -108,6 +158,7 @@ const App: React.FC = () => {
         if (!GA_ID) return;
         const titleMap: Record<Tab, string> = {
             prompt: 'Prompt',
+            image: 'Image',
             video: 'Video',
             storybook: 'Storybook',
             storybook_prompt: 'Storybook Prompt',
@@ -351,6 +402,12 @@ const App: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-sans bg-gradient-to-br from-gray-100 to-indigo-100 dark:from-gray-900 dark:via-gray-900 dark:to-indigo-900/50 transition-colors duration-300">
+            {/* Toast for API key feedback */}
+            {apiKeyFeedback && (
+              <div className="fixed top-4 right-4 z-50" role="status" aria-live="polite">
+                <div className={`${(apiKeyFeedback.includes('cleared') || apiKeyFeedback.includes('empty')) ? 'bg-yellow-600' : 'bg-emerald-600'} text-white px-4 py-2 rounded shadow-lg`}>{apiKeyFeedback}</div>
+              </div>
+            )}
             <header className="bg-white/50 dark:bg-gray-800/50 backdrop-blur-sm sticky top-0 z-10">
                 <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4">
                    <div className="flex flex-wrap justify-between items-center gap-4">
@@ -375,7 +432,7 @@ const App: React.FC = () => {
                                     <button onClick={handleSaveApiKey} className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm font-semibold">Save</button>
                                     <button onClick={handleClearApiKey} className="px-3 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-500 transition-colors text-sm font-semibold">Clear</button>
                                 </div>
-                                {apiKeyFeedback && <p className={`text-sm mt-1 ${apiKeyFeedback.includes('cleared') || apiKeyFeedback.includes('empty') ? 'text-yellow-600 dark:text-yellow-400' : 'text-green-600 dark:text-green-400'}`}>{apiKeyFeedback}</p>}
+                                {/* Inline feedback replaced by toast */}
                             </div>
                             <button onClick={toggleTheme} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors mt-6" aria-label="Toggle theme">
                                 {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
@@ -407,6 +464,7 @@ const App: React.FC = () => {
                      <nav className="mt-4 border-b border-gray-300 dark:border-gray-700">
                         <div className="flex space-x-2" role="tablist" aria-label="App Navigation">
                             <TabButton title="Video Prompt Gen" active={activeTab === 'prompt'} onClick={() => setActiveTab('prompt')} />
+                            <TabButton title="Image Generator" active={activeTab === 'image'} onClick={() => setActiveTab('image')} />
                             <TabButton title="Video Generator" active={activeTab === 'video'} onClick={() => setActiveTab('video')} />
                             <TabButton title="Storybook Prompt Gen" active={activeTab === 'storybook_prompt'} onClick={() => setActiveTab('storybook_prompt')} />
                             <TabButton title="Storybook Builder" active={activeTab === 'storybook'} onClick={() => setActiveTab('storybook')} />
@@ -436,9 +494,9 @@ const App: React.FC = () => {
                                             </div>
                                             {renderSelect('Character Style', char.characterStyle, e => updateCharacter(char.id, 'characterStyle', e.target.value), CHARACTER_STYLES)}
                                             {renderSelect('Gender', char.gender, e => updateCharacter(char.id, 'gender', e.target.value), GENDERS)}
-                                            {renderInput('Age', char.age, e => updateCharacter(char.id, 'age', e.target.value), 'text', 'e.g., 30')}
-                                            {renderInput('Outfit', char.outfit, e => updateCharacter(char.id, 'outfit', e.target.value), 'text', 'e.g., Leather jacket, jeans')}
-                                            {renderInput('Hairstyle', char.hairstyle, e => updateCharacter(char.id, 'hairstyle', e.target.value), 'text', 'e.g., Short and spiky')}
+                                            {renderSelect('Age', char.age, e => updateCharacter(char.id, 'age', e.target.value), AGES)}
+                                            {renderSelect('Outfit', char.outfit, e => updateCharacter(char.id, 'outfit', e.target.value), OUTFITS)}
+                                            {renderSelect('Hairstyle', char.hairstyle, e => updateCharacter(char.id, 'hairstyle', e.target.value), HAIRSTYLES)}
                                             {renderSelect('Voice', char.voice, e => updateCharacter(char.id, 'voice', e.target.value), VOICES)}
                                         </div>
                                         {renderInput('Description / Action', char.description, e => updateCharacter(char.id, 'description', e.target.value), 'textarea', 'e.g., Pacing anxiously, looking at a watch')}
@@ -470,7 +528,7 @@ const App: React.FC = () => {
                                  {renderSelect('Lighting', promptData.environment.lighting, e => updateEnvironment('lighting', e.target.value), LIGHTING_STYLES)}
                                  {renderSelect('Camera Angle', promptData.environment.cameraAngle, e => updateEnvironment('cameraAngle', e.target.value), CAMERA_ANGLES)}
                                  {renderSelect('Shooting Style', promptData.environment.shootingStyle, e => updateEnvironment('shootingStyle', e.target.value), SHOOTING_STYLES)}
-                                 {renderInput('Other VEO3 Options', promptData.environment.otherOptions, e => updateEnvironment('otherOptions', e.target.value), 'text', 'e.g., hyper-realistic, 8k')}
+                                 {renderSelect('Other VEO3 Options', promptData.environment.otherOptions, e => updateEnvironment('otherOptions', e.target.value), OTHER_VEO_OPTIONS)}
                              </InputGroup>
                         </div>
 
@@ -482,7 +540,13 @@ const App: React.FC = () => {
                         </div>
                     </div>
                 )}
-                {activeTab === 'video' && <VideoGenerator apiKey={apiKey} />}
+                {/* Keep Image and Video tabs mounted to preserve state across tab switches */}
+                <div className={activeTab === 'image' ? '' : 'hidden'} aria-hidden={activeTab !== 'image'}>
+                    <ImageGenerator apiKey={apiKey} />
+                </div>
+                <div className={activeTab === 'video' ? '' : 'hidden'} aria-hidden={activeTab !== 'video'}>
+                    <VideoGenerator apiKey={apiKey} />
+                </div>
                 {activeTab === 'storybook_prompt' && <StorybookPromptGenerator />}
                 {activeTab === 'storybook' && <StorybookBuilder apiKey={apiKey} />}
             </main>
