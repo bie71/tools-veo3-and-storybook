@@ -7,6 +7,7 @@ import { PlusIcon, TrashIcon, SunIcon, MoonIcon } from './components/icons';
 import VideoGenerator from './components/VideoGenerator';
 import StorybookBuilder from './components/StorybookBuilder';
 import StorybookPromptGenerator from './components/StorybookPromptGenerator';
+import { trackEvent, trackPageView } from './analytics';
 
 type Tab = 'prompt' | 'video' | 'storybook' | 'storybook_prompt';
 type Theme = 'light' | 'dark';
@@ -66,9 +67,9 @@ const App: React.FC = () => {
         });
     };
 
-    // Hint developers to install React DevTools (dev only)
+    // Optional: hint to install React DevTools when explicitly enabled
     useEffect(() => {
-        if (import.meta?.env?.DEV) {
+        if ((import.meta as any).env?.VITE_SHOW_DEVTOOLS === '1') {
             // eslint-disable-next-line no-console
             console.info('Download the React DevTools for a better development experience: https://react.dev/link/react-devtools');
         }
@@ -82,6 +83,41 @@ const App: React.FC = () => {
         }
     }, []);
 
+    // CountAPI removed: GA-only analytics
+
+    // Initialize Google Analytics (GA4) if Measurement ID is provided
+    useEffect(() => {
+        const GA_ID = (import.meta as any).env?.VITE_GA_MEASUREMENT_ID as string | undefined;
+        if (!GA_ID) return; // skip if not configured
+        // Inject gtag script
+        const script = document.createElement('script');
+        script.async = true;
+        script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(GA_ID)}`;
+        document.head.appendChild(script);
+        const inline = document.createElement('script');
+        inline.innerHTML = `window.dataLayer = window.dataLayer || [];\nfunction gtag(){dataLayer.push(arguments);}\ngtag('js', new Date());\ngtag('config', '${GA_ID}', { send_page_view: false });`;
+        document.head.appendChild(inline);
+        return () => {
+            // optional cleanup: keep GA loaded across SPA lifetime
+        };
+    }, []);
+
+    // Send page_view to GA on tab changes
+    useEffect(() => {
+        const GA_ID = (import.meta as any).env?.VITE_GA_MEASUREMENT_ID as string | undefined;
+        if (!GA_ID) return;
+        const titleMap: Record<Tab, string> = {
+            prompt: 'Prompt',
+            video: 'Video',
+            storybook: 'Storybook',
+            storybook_prompt: 'Storybook Prompt',
+        };
+        const page_path = `/${activeTab}`;
+        const page_title = `VEO App — ${titleMap[activeTab]}`;
+        trackPageView(page_path, page_title, activeTab);
+    }, [activeTab]);
+
+
     const handleSaveApiKey = () => {
         if (!apiKeyInput.trim()) {
             setApiKeyFeedback('API Key cannot be empty.');
@@ -91,6 +127,7 @@ const App: React.FC = () => {
         setApiKey(apiKeyInput);
         localStorage.setItem('gemini_api_key', apiKeyInput);
         setApiKeyFeedback('API Key saved successfully!');
+        try { trackEvent('api_key_save'); } catch {}
         setTimeout(() => setApiKeyFeedback(''), 3000);
     };
 
@@ -99,6 +136,7 @@ const App: React.FC = () => {
         setApiKeyInput('');
         localStorage.removeItem('gemini_api_key');
         setApiKeyFeedback('API Key cleared.');
+        try { trackEvent('api_key_clear'); } catch {}
         setTimeout(() => setApiKeyFeedback(''), 3000);
     };
 
@@ -249,6 +287,23 @@ const App: React.FC = () => {
         generatePrompts(promptData);
     }, [promptData, generatePrompts]);
 
+    // Debounced analytics for prompt generation on the 'prompt' tab
+    useEffect(() => {
+        const t = window.setTimeout(() => {
+            try {
+                trackEvent('generate_video_prompt', {
+                    characters: promptData.characters.length,
+                    dialogues: promptData.dialogues.length,
+                    has_other_options: !!promptData.environment.otherOptions,
+                    lighting: promptData.environment.lighting,
+                    camera_angle: promptData.environment.cameraAngle,
+                    shooting_style: promptData.environment.shootingStyle,
+                });
+            } catch {}
+        }, 800);
+        return () => window.clearTimeout(t);
+    }, [promptData.characters.length, promptData.dialogues.length, promptData.environment.otherOptions, promptData.environment.lighting, promptData.environment.cameraAngle, promptData.environment.shootingStyle]);
+
     const renderInput = (label: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void, type = 'text', placeholder = '') => (
         <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
@@ -325,7 +380,19 @@ const App: React.FC = () => {
                             <button onClick={toggleTheme} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors mt-6" aria-label="Toggle theme">
                                 {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
                             </button>
-                            {import.meta?.env?.DEV && (
+                            <a
+                              href={'https://saweria.co/bie7'}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-6 inline-flex items-center gap-2 px-3 py-2 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 transition-colors text-sm font-semibold"
+                              title="Dukung server via Saweria"
+                              onClick={() => { try { trackEvent('donate_click', { provider: 'saweria' }); } catch {} }}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M11.645 20.91l-.007-.003-.022-.01a15.247 15.247 0 01-.383-.173 25.18 25.18 0 01-4.244-2.566C4.688 16.281 2.25 13.557 2.25 10.125 2.25 6.753 4.903 4.5 8 4.5c1.676 0 3.153.652 4.145 1.67C13.318 5.152 14.795 4.5 16.47 4.5c3.098 0 5.78 2.258 5.78 5.625 0 3.432-2.438 6.156-4.739 7.996a25.175 25.175 0 01-4.244 2.566 15.247 15.247 0 01-.383.173l-.022.01-.007.003a.75.75 0 01-.61 0z" /></svg>
+                              Donate Saweria
+                            </a>
+                            {/* Total visits moved to bottom sticky */}
+                            {(import.meta as any).env?.VITE_SHOW_DEVTOOLS === '1' && (
                                 <a
                                     href="https://react.dev/link/react-devtools"
                                     target="_blank"
@@ -419,6 +486,7 @@ const App: React.FC = () => {
                 {activeTab === 'storybook_prompt' && <StorybookPromptGenerator />}
                 {activeTab === 'storybook' && <StorybookBuilder apiKey={apiKey} />}
             </main>
+            {/* CountAPI UI removed: GA-only analytics */}
         </div>
     );
 };

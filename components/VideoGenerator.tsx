@@ -4,6 +4,7 @@ import { GoogleGenAI } from "@google/genai";
 import InputGroup from './InputGroup';
 import { TrashIcon, LoaderIcon } from './icons';
 import { CHARACTER_STYLES } from '../constants';
+import { trackEvent } from '../analytics';
 
 interface VideoGeneratorProps {
     apiKey: string;
@@ -196,6 +197,17 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
     }, []);
 
     const handleGenerateVideo = async () => {
+        try {
+            trackEvent('generate_video_start', {
+                segmented: segmentedMode,
+                model: (useCustomModel && customModelId.trim()) ? 'custom' : videoModel,
+                aspect_ratio: aspectRatio,
+                resolution,
+                enable_audio: enableAudio,
+                ai_mode: aiMode,
+                character_style: characterStyle,
+            });
+        } catch {}
         if (!apiKey) {
             setError('Please enter and save your Gemini API Key in the header.');
             return;
@@ -281,10 +293,12 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
             const videoUrl = URL.createObjectURL(videoBlob);
             setGeneratedVideoUrl(videoUrl);
             setStatusMessage('Done!');
+            try { trackEvent('generate_video_success', { duration_sec: duration, segmented: false }); } catch {}
 
         } catch (err: any) {
             console.error(err);
             setError(err.message || 'An unknown error occurred during video generation.');
+            try { trackEvent('generate_video_error', { message: String(err?.message || '').slice(0, 120) }); } catch {}
         } finally {
             setIsLoading(false);
         }
@@ -299,6 +313,16 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
         setError(null);
         setGeneratedVideoUrl(null);
         setSegments(prev => prev.map(s => ({ ...s, videoUrl: null, error: null, status: 'Queued...' })));
+        try {
+            trackEvent('generate_segments_start', {
+                count: segments.length,
+                aspect_ratio: aspectRatio,
+                resolution,
+                enable_audio: enableAudio,
+                ai_mode: aiMode,
+                character_style: characterStyle,
+            });
+        } catch {}
         try {
             const ai = new GoogleGenAI({ apiKey });
             let previousUrl: string | null = null;
@@ -363,9 +387,11 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
                 setSegments(prev => prev.map(s => s.id === seg.id ? { ...s, videoUrl: url, status: 'Done', thumbDataUrl: thumb } : s));
             }
             setStatusMessage('All segments generated! You can Play All or download each.');
+            try { trackEvent('generate_segments_complete', { count: segments.length }); } catch {}
         } catch (err: any) {
             console.error(err);
             setError(err.message || 'An error occurred during segmented generation.');
+            try { trackEvent('generate_segments_error', { message: String(err?.message || '').slice(0, 120) }); } catch {}
         } finally {
             setIsLoading(false);
         }
@@ -427,6 +453,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
         if (urls.length < 2) { setError('Need at least two segments to merge.'); return; }
         setIsMerging(true);
         setStatusMessage('Preparing FFmpeg (this may take a while)...');
+        try { trackEvent('merge_segments', { method: 'concat', count: urls.length }); } catch {}
         try {
             const mod: any = await import('@ffmpeg/ffmpeg');
             const ffmpeg = mod.createFFmpeg({ log: false });
@@ -447,9 +474,11 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
             const url = URL.createObjectURL(blob);
             setMergedVideoUrl(url);
             setStatusMessage('Merged video ready.');
+            try { trackEvent('merge_segments_success', { method: 'concat' }); } catch {}
         } catch (e: any) {
             console.error(e);
             setError('Merging failed. The segments may have incompatible codecs. Try using same model/aspect/resolution for all.');
+            try { trackEvent('merge_segments_error', { method: 'concat' }); } catch {}
         } finally {
             setIsMerging(false);
         }
@@ -460,6 +489,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
         if (urls.length < 2) { setError('Need at least two segments to merge.'); return; }
         setIsMerging(true);
         setStatusMessage('Loading FFmpeg (this may take a while)...');
+        try { trackEvent('merge_segments', { method: 'crossfade', count: urls.length, fade_seconds: fadeSeconds }); } catch {}
         try {
             const mod: any = await import('@ffmpeg/ffmpeg');
             const ffmpeg = mod.createFFmpeg({ log: false });
@@ -512,9 +542,11 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
             const url = URL.createObjectURL(blob);
             setMergedVideoUrl(url);
             setStatusMessage('Crossfade merged video ready.');
+            try { trackEvent('merge_segments_success', { method: 'crossfade' }); } catch {}
         } catch (e: any) {
             console.error(e);
             setError('Crossfade merge failed. This is CPU-intensive in the browser.');
+            try { trackEvent('merge_segments_error', { method: 'crossfade' }); } catch {}
         } finally {
             setIsMerging(false);
         }
@@ -788,11 +820,12 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
                             href={generatedVideoUrl}
                             download={`veo-video-${Date.now()}.mp4`}
                             className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
+                            onClick={() => { try { trackEvent('video_download', { kind: 'single' }); } catch {} }}
                           >
                             Download MP4
                           </a>
                         </div>
-                        <video controls src={generatedVideoUrl} className="w-full rounded-lg border border-gray-300 dark:border-gray-700 shadow-lg">
+                        <video controls src={generatedVideoUrl} className="w-full rounded-lg border border-gray-300 dark:border-gray-700 shadow-lg" onPlay={() => { try { trackEvent('video_play', { kind: 'single' }); } catch {} }}>
                             Your browser does not support the video tag.
                         </video>
                     </div>
@@ -802,6 +835,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
                             <h3 className="text-lg font-bold text-gray-900 dark:text-white">Generated Segments</h3>
                             <button
                                 onClick={() => {
+                                    try { trackEvent('segments_play_all', { count: playlistUrls.length }); } catch {}
                                     const v = playlistVideoRef.current;
                                     if (v && playlistUrls.length > 0) {
                                         v.src = playlistUrls[0];
@@ -817,6 +851,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
                             ref={playlistVideoRef}
                             controls
                             className="w-full rounded-lg border border-gray-300 dark:border-gray-700 shadow-lg mb-4 transition-opacity duration-300"
+                            onPlay={() => { try { trackEvent('video_play', { kind: 'playlist' }); } catch {} }}
                             onEnded={() => {
                                 const v = playlistVideoRef.current;
                                 if (!v) return;
@@ -873,9 +908,9 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
                             <div className="mt-2">
                                 <div className="flex items-center justify-between mb-2">
                                     <h3 className="text-md font-semibold text-gray-900 dark:text-white">Merged Video</h3>
-                                    <a href={mergedVideoUrl} download={`veo-merged-${Date.now()}.mp4`} className="text-sm text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-md">Download MP4</a>
+                                    <a href={mergedVideoUrl} download={`veo-merged-${Date.now()}.mp4`} className="text-sm text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-md" onClick={() => { try { trackEvent('video_download', { kind: 'merged' }); } catch {} }}>Download MP4</a>
                                 </div>
-                                <video controls src={mergedVideoUrl} className="w-full rounded-lg border border-gray-300 dark:border-gray-700 shadow" />
+                                <video controls src={mergedVideoUrl} className="w-full rounded-lg border border-gray-300 dark:border-gray-700 shadow" onPlay={() => { try { trackEvent('video_play', { kind: 'merged' }); } catch {} }} />
                             </div>
                         )}
                         <div className="grid grid-cols-1 gap-3">
@@ -891,7 +926,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
                                             <p className="text-sm text-gray-700 dark:text-gray-300 font-medium">Segment {idx + 1} — {s.status || (s.videoUrl ? 'Ready' : 'Idle')}</p>
                                         </div>
                                         {s.videoUrl && (
-                                            <a href={s.videoUrl} download={`veo-segment-${idx + 1}.mp4`} className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline">Download</a>
+                                            <a href={s.videoUrl} download={`veo-segment-${idx + 1}.mp4`} className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline" onClick={() => { try { trackEvent('video_download', { kind: 'segment', index: idx + 1 }); } catch {} }}>Download</a>
                                         )}
                                     </div>
                                 </div>

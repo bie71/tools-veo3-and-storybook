@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  web:
+    build:
+      context: .
+      args:
+        VITE_GA_MEASUREMENT_ID: ${VITE_GA_MEASUREMENT_ID}
+        # Keep DevTools hidden in prod
+        VITE_SHOW_DEVTOOLS: ${VITE_SHOW_DEVTOOLS}
+    image: veo3-app:prod
+    container_name: veo3-web-prod
+    ports:
+      - "8080:80"
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped

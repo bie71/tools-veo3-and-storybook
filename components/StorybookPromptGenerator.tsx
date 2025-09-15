@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { StoryPromptData, StoryPlotPoint } from '../types';
 import { STORYBOOK_AGES, STORYBOOK_ART_STYLES, STORYBOOK_CHARACTER_SPECIES, STORYBOOK_CHARACTER_PERSONALITIES, STORYBOOK_LOCATIONS, STORYBOOK_ATMOSPHERES } from '../constants';
 import InputGroup from './InputGroup';
 import OutputBlock from './OutputBlock';
 import { PlusIcon, TrashIcon, QuillIcon } from './icons';
+import { trackEvent } from '../analytics';
 
 const StorybookPromptGenerator: React.FC = () => {
     const [promptData, setPromptData] = useState<StoryPromptData>({
@@ -30,6 +31,7 @@ const StorybookPromptGenerator: React.FC = () => {
         english: '',
         indonesian: ''
     });
+    const debounceRef = useRef<number | undefined>(undefined);
 
     const updateField = (section: keyof StoryPromptData, field: string, value: string) => {
         setPromptData(prev => ({
@@ -133,6 +135,24 @@ const StorybookPromptGenerator: React.FC = () => {
     useEffect(() => {
         generatePrompt();
     }, [promptData, generatePrompt]);
+
+    // Debounced tracking to avoid spamming GA on every keystroke
+    useEffect(() => {
+        if (debounceRef.current) window.clearTimeout(debounceRef.current);
+        debounceRef.current = window.setTimeout(() => {
+            try {
+                if (generatedPrompts.english || generatedPrompts.indonesian) {
+                    trackEvent('generate_story_prompt', {
+                        age_group: promptData.ageGroup,
+                        art_style: promptData.artStyle,
+                        moral_present: !!promptData.moral,
+                        plot_points: promptData.plotPoints.length,
+                    });
+                }
+            } catch {}
+        }, 800);
+        return () => { if (debounceRef.current) window.clearTimeout(debounceRef.current); };
+    }, [generatedPrompts, promptData.ageGroup, promptData.artStyle, promptData.moral, promptData.plotPoints.length]);
 
     const renderInput = (label: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void, type = 'text', placeholder = '') => (
         <div>

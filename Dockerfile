@@ -11,6 +11,12 @@ RUN npm ci
 # Copy static assets explicitly to ensure they're included in the build
 COPY public ./public
 
+# Allow passing Vite envs at build time
+ARG VITE_GA_MEASUREMENT_ID
+ARG VITE_SHOW_DEVTOOLS
+ENV VITE_GA_MEASUREMENT_ID=${VITE_GA_MEASUREMENT_ID}
+ENV VITE_SHOW_DEVTOOLS=${VITE_SHOW_DEVTOOLS}
+
 # Copy the rest of the source and build
 COPY . .
 RUN npm run build

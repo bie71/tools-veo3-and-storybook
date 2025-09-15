@@ -4,6 +4,7 @@ import InputGroup from './InputGroup';
 import { LoaderIcon, BookOpenIcon } from './icons';
 import { STORYBOOK_AGES, STORYBOOK_ART_STYLES } from '../constants';
 import { StoryPage } from '../types';
+import { trackEvent } from '../analytics';
 
 interface StorybookBuilderProps {
     apiKey: string;
@@ -20,6 +21,7 @@ const StorybookBuilder: React.FC<StorybookBuilderProps> = ({ apiKey }) => {
     const [storyPages, setStoryPages] = useState<StoryPage[]>([]);
 
     const handleGenerateStory = async () => {
+        try { trackEvent('generate_story_start', { age_group: ageGroup, art_style: artStyle }); } catch {}
         if (!apiKey) {
             setError('Please enter and save your Gemini API Key in the header.');
             return;
@@ -96,10 +98,12 @@ const StorybookBuilder: React.FC<StorybookBuilderProps> = ({ apiKey }) => {
                 setStoryPages([...updatedPages]); // Update state incrementally
             }
             setStatusMessage('Story complete!');
+            try { trackEvent('generate_story_success', { pages: updatedPages.length, art_style: artStyle, age_group: ageGroup }); } catch {}
 
         } catch (err: any) {
             console.error(err);
             setError(err.message || 'An unknown error occurred during story generation.');
+            try { trackEvent('generate_story_error', { message: String(err?.message || '').slice(0, 120) }); } catch {}
         } finally {
             setIsLoading(false);
         }

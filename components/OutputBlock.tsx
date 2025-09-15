@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { CopyIcon } from './icons';
+import { trackEvent } from '../analytics';
 
 interface OutputBlockProps {
   title: string;
@@ -13,6 +14,7 @@ const OutputBlock: React.FC<OutputBlockProps> = ({ title, content, language = 't
   const handleCopy = () => {
     navigator.clipboard.writeText(content);
     setCopied(true);
+    try { trackEvent('output_copy', { title }); } catch {}
     setTimeout(() => setCopied(false), 2000);
   };
 
