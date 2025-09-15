@@ -808,9 +808,9 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
                         </div>
                     </div>
                 ) : error ? (
-                    <div className="w-full p-4 bg-red-100 dark:bg-red-900/50 border border-red-300 dark:border-red-700 text-red-700 dark:text-red-300 rounded-lg" role="alert">
+                    <div className="w-full p-4 bg-red-100 dark:bg-red-900/50 border border-red-300 dark:border-red-700 text-red-700 dark:text-red-300 rounded-lg break-words max-h-48 overflow-auto" role="alert">
                         <p className="font-bold text-center">Error</p>
-                        <p className="text-center mt-2">{error}</p>
+                        <p className="text-center mt-2 break-words whitespace-pre-wrap">{error}</p>
                     </div>
                 ) : generatedVideoUrl ? (
                      <div className="w-full">
