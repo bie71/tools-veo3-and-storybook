@@ -194,7 +194,7 @@ const StorybookPromptGenerator: React.FC = () => {
     return (
          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* INPUTS COLUMN */}
-            <div className="overflow-y-auto" style={{maxHeight: 'calc(100vh - 120px)'}}>
+            <div>
                 <InputGroup title="Core Concept">
                     {renderInput('Story Idea', promptData.idea, e => updateRootField('idea', e.target.value), 'textarea', 'e.g., A shy firefly who is afraid of the dark')}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

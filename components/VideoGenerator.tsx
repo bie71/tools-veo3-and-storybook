@@ -637,7 +637,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
                                 value={prompt}
                                 onChange={e => setPrompt(e.target.value)}
                                 placeholder="e.g., A neon hologram of a cat driving at top speed"
-                                className="w-full bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500 resize-y min-h-64"
+                                className="w-full bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none min-h-64"
                                 rows={12}
                                 aria-label="Video Prompt"
                             />
@@ -645,28 +645,30 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
                     )}
                     {segmentedMode && (
                         <div className="mt-4 p-3 rounded-md border border-gray-300 dark:border-gray-700 bg-white/40 dark:bg-gray-900/40">
-                            <div className="flex items-center gap-3 mb-3">
+                            <div className="flex flex-wrap items-center gap-3 mb-3">
                                 <label className="text-sm text-gray-700 dark:text-gray-300">Base Prompt</label>
                                 <input
                                     type="text"
                                     value={prompt}
                                     onChange={(e) => setPrompt(e.target.value)}
                                     placeholder="Overall concept used to generate segment prompts"
-                                    className="flex-1 bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    className="w-full sm:flex-1 min-w-0 bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
                                 />
-                                <label className="text-sm text-gray-700 dark:text-gray-300">Count</label>
-                                <input id="seg-count" type="number" min={1} max={8} defaultValue={segments.length} className="w-20 bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md p-2" />
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        const el = document.getElementById('seg-count') as HTMLInputElement | null;
-                                        const val = el ? parseInt(el.value || '1', 10) : segments.length;
-                                        autoGenerateSegmentPrompts(Math.max(1, Math.min(8, val)));
-                                    }}
-                                    className="px-3 py-2 text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
-                                >
-                                    Generate Segment Prompts
-                                </button>
+                                <div className="w-full sm:w-auto flex items-center gap-2">
+                                    <label className="text-sm text-gray-700 dark:text-gray-300">Count</label>
+                                    <input id="seg-count" type="number" min={1} max={8} defaultValue={segments.length} className="w-24 bg-gray-200/50 dark:bg-gray-700/50 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-md p-2" />
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const el = document.getElementById('seg-count') as HTMLInputElement | null;
+                                            const val = el ? parseInt(el.value || '1', 10) : segments.length;
+                                            autoGenerateSegmentPrompts(Math.max(1, Math.min(8, val)));
+                                        }}
+                                        className="w-full sm:w-auto px-3 py-2 text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
+                                    >
+                                        Generate Segment Prompts
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     )}

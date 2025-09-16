@@ -94,6 +94,23 @@ const TabButton: React.FC<{ title: string; active: boolean; onClick: () => void;
 
 const App: React.FC = () => {
     const [activeTab, setActiveTab] = useState<Tab>('prompt');
+    const [isNavOpen, setIsNavOpen] = useState<boolean>(false);
+    const [drawerIn, setDrawerIn] = useState<boolean>(false);
+
+    // Handle drawer enter/leave animation state
+    useEffect(() => {
+        if (isNavOpen) {
+            const t = window.setTimeout(() => setDrawerIn(true), 10);
+            return () => window.clearTimeout(t);
+        } else {
+            setDrawerIn(false);
+        }
+    }, [isNavOpen]);
+
+    const closeDrawer = useCallback(() => {
+        setDrawerIn(false);
+        window.setTimeout(() => setIsNavOpen(false), 280);
+    }, []);
     const [apiKey, setApiKey] = useState<string>('');
     const [apiKeyInput, setApiKeyInput] = useState<string>('');
     const [apiKeyFeedback, setApiKeyFeedback] = useState<string>('');
@@ -411,9 +428,21 @@ const App: React.FC = () => {
             <header className="bg-white/50 dark:bg-gray-800/50 backdrop-blur-sm sticky top-0 z-10">
                 <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4">
                    <div className="flex flex-wrap justify-between items-center gap-4">
-                        <div>
-                             <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">VEO Prompt & Video Generator</h1>
-                            <p className="text-indigo-600 dark:text-indigo-400 mt-1">Craft prompts, generate videos, or build illustrated stories.</p>
+                        <div className="flex items-start gap-3">
+                            {/* Mobile menu button */}
+                            <button
+                              className="sm:hidden inline-flex items-center justify-center p-2 mt-1 rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-200/60 dark:hover:bg-gray-700/60 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              aria-label="Open navigation"
+                              onClick={() => setIsNavOpen(true)}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                              </svg>
+                            </button>
+                            <div className="flex flex-col">
+                                <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">VEO Prompt & Video Generator</h1>
+                                <p className="text-indigo-600 dark:text-indigo-400 mt-1">Craft prompts, generate videos, or build illustrated stories.</p>
+                            </div>
                         </div>
                         <div className="flex items-center gap-4">
                              <div className="flex-grow max-w-md">
@@ -461,8 +490,8 @@ const App: React.FC = () => {
                             )}
                         </div>
                    </div>
-                     <nav className="mt-4 border-b border-gray-300 dark:border-gray-700">
-                        <div className="flex space-x-2" role="tablist" aria-label="App Navigation">
+                    <nav className="mt-4 border-b border-gray-300 dark:border-gray-700">
+                        <div className="hidden sm:flex space-x-2" role="tablist" aria-label="App Navigation">
                             <TabButton title="Video Prompt Gen" active={activeTab === 'prompt'} onClick={() => setActiveTab('prompt')} />
                             <TabButton title="Image Generator" active={activeTab === 'image'} onClick={() => setActiveTab('image')} />
                             <TabButton title="Video Generator" active={activeTab === 'video'} onClick={() => setActiveTab('video')} />
@@ -472,11 +501,40 @@ const App: React.FC = () => {
                     </nav>
                 </div>
             </header>
+            {/* Mobile side menu drawer */}
+            {isNavOpen && (
+              <div className="sm:hidden fixed inset-0 z-20" role="dialog" aria-modal="true">
+                <div
+                  className={`absolute inset-0 bg-black/50 transition-opacity duration-300 ${drawerIn ? 'opacity-100' : 'opacity-0'}`}
+                  onClick={closeDrawer}
+                  aria-hidden="true"
+                />
+                <div className={`absolute left-0 top-0 h-full w-64 max-w-[85vw] transform transition-transform duration-300 ease-out ${drawerIn ? 'translate-x-0' : '-translate-x-full'} bg-white dark:bg-gray-900 shadow-xl border-r border-gray-200 dark:border-gray-700 p-4 flex flex-col gap-2`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-base font-semibold text-gray-900 dark:text-white">Menu</span>
+                    <button
+                      className="p-2 rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-200/60 dark:hover:bg-gray-700/60"
+                      aria-label="Close navigation"
+                      onClick={closeDrawer}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  <button className={`text-left px-3 py-2 rounded-md ${activeTab === 'prompt' ? 'bg-indigo-600 text-white' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-200/50 dark:hover:bg-gray-700/50'}`} onClick={() => { setActiveTab('prompt'); closeDrawer(); }}>Video Prompt Gen</button>
+                  <button className={`text-left px-3 py-2 rounded-md ${activeTab === 'image' ? 'bg-indigo-600 text-white' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-200/50 dark:hover:bg-gray-700/50'}`} onClick={() => { setActiveTab('image'); closeDrawer(); }}>Image Generator</button>
+                  <button className={`text-left px-3 py-2 rounded-md ${activeTab === 'video' ? 'bg-indigo-600 text-white' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-200/50 dark:hover:bg-gray-700/50'}`} onClick={() => { setActiveTab('video'); closeDrawer(); }}>Video Generator</button>
+                  <button className={`text-left px-3 py-2 rounded-md ${activeTab === 'storybook_prompt' ? 'bg-indigo-600 text-white' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-200/50 dark:hover:bg-gray-700/50'}`} onClick={() => { setActiveTab('storybook_prompt'); closeDrawer(); }}>Storybook Prompt Gen</button>
+                  <button className={`text-left px-3 py-2 rounded-md ${activeTab === 'storybook' ? 'bg-indigo-600 text-white' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-200/50 dark:hover:bg-gray-700/50'}`} onClick={() => { setActiveTab('storybook'); closeDrawer(); }}>Storybook Builder</button>
+                </div>
+              </div>
+            )}
             <main className="container mx-auto p-4 sm:p-6 lg:p-8">
                 {activeTab === 'prompt' && (
                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                         {/* INPUTS COLUMN */}
-                        <div className="overflow-y-auto" style={{maxHeight: 'calc(100vh - 120px)'}}>
+                        <div>
                              <InputGroup title="Characters" actionButton={
                                 <button onClick={addCharacter} className="flex items-center text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-700 transition-colors"><PlusIcon/> <span className="ml-2">Add Character</span></button>
                              }>
