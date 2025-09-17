@@ -5,6 +5,7 @@ import InputGroup from './InputGroup';
 import { TrashIcon, LoaderIcon } from './icons';
 import { CHARACTER_STYLES } from '../constants';
 import { trackEvent } from '../analytics';
+import { RequestQueue, QueueSnapshot } from '../lib/requestQueue';
 
 interface VideoGeneratorProps {
     apiKey: string;
@@ -28,7 +29,35 @@ interface SegmentItem {
 const ASPECT_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"];
 const RESOLUTIONS = ["480p", "720p", "1080p", "2K"] as const;
 const AI_MODES = ['Cinematic', 'Realistic', 'Animated', 'Documentary', 'Vlog', 'Surreal'];
-const VIDEO_MODELS = ['veo-3.0-generate-001', 'veo-2.0-generate-001'];
+const VIDEO_MODELS = ['veo-3.0-generate-001', 'veo-3.0-fast-generate-001', 'veo-2.0-generate-001'];
+
+type Resolution = typeof RESOLUTIONS[number];
+
+interface SingleVideoJobInput {
+    prompt: string;
+    duration: number;
+    aspectRatio: string;
+    resolution: Resolution;
+    enableAudio: boolean;
+    aiMode: string;
+    characterStyle: string;
+    imageFile: File | null;
+    modelId: string;
+    apiKey: string;
+}
+
+interface SegmentJobInput {
+    segments: SegmentItem[];
+    basePrompt: string;
+    aiMode: string;
+    characterStyle: string;
+    aspectRatio: string;
+    resolution: Resolution;
+    enableAudio: boolean;
+    modelId: string;
+    apiKey: string;
+    queueDelayMs: number;
+}
 
 
 const fileToBase64 = (file: File): Promise<string> => {
@@ -68,6 +97,34 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
     const [statusMessage, setStatusMessage] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
+    const queueDelayMsRaw = Number(import.meta.env.VITE_VIDEO_QUEUE_DELAY_MS ?? '5000');
+    const queueDelayMs = Number.isFinite(queueDelayMsRaw) && queueDelayMsRaw >= 0 ? queueDelayMsRaw : 5000;
+    const videoQueue = React.useMemo(() => new RequestQueue(queueDelayMs), [queueDelayMs]);
+    const [queueSnapshot, setQueueSnapshot] = useState<QueueSnapshot>(videoQueue.snapshot());
+    const [activeQueueJobId, setActiveQueueJobId] = useState<string | null>(null);
+
+    React.useEffect(() => {
+        const unsubscribe = videoQueue.subscribe(setQueueSnapshot);
+        return unsubscribe;
+    }, [videoQueue]);
+
+    React.useEffect(() => {
+        if (!activeQueueJobId) return;
+        const { activeTaskId, queuedIds, delayRemainingMs } = queueSnapshot;
+        if (activeTaskId === activeQueueJobId) return;
+        const position = queuedIds.indexOf(activeQueueJobId);
+        if (position === -1) return;
+        if (position === 0) {
+            if (typeof delayRemainingMs === 'number') {
+                const seconds = Math.max(0, Math.ceil(delayRemainingMs / 1000));
+                setStatusMessage(`Queued — starting in ${seconds}s`);
+            } else {
+                setStatusMessage('Queued — waiting to start...');
+            }
+        } else {
+            setStatusMessage(`Queued — ${position} request${position === 1 ? '' : 's'} ahead...`);
+        }
+    }, [queueSnapshot, activeQueueJobId]);
 
     const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -196,6 +253,197 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
         });
     }, []);
 
+    const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    const countdownDelay = async (ms: number, onTick: (remainingSeconds: number) => void) => {
+        if (ms <= 0) return;
+        let remaining = ms;
+        onTick(Math.ceil(remaining / 1000));
+        while (remaining > 0) {
+            const step = Math.min(1000, remaining);
+            await wait(step);
+            remaining -= step;
+            onTick(Math.max(0, Math.ceil(remaining / 1000)));
+        }
+    };
+
+    const performSingleVideoGeneration = async (context: SingleVideoJobInput) => {
+        const { apiKey: ctxApiKey, prompt: ctxPrompt, duration: ctxDuration, aspectRatio: ctxAspect, resolution: ctxResolution, enableAudio: ctxEnableAudio, aiMode: ctxAiMode, characterStyle: ctxCharacterStyle, imageFile: ctxImageFile, modelId: ctxModelId } = context;
+        setError(null);
+        setStatusMessage('Initializing video generation...');
+        try {
+            const ai = new GoogleGenAI({ apiKey: ctxApiKey });
+
+            let imagePayload: { imageBytes: string; mimeType: string } | undefined;
+            if (ctxImageFile) {
+                setStatusMessage('Processing reference image...');
+                const base64Data = await fileToBase64(ctxImageFile);
+                imagePayload = {
+                    imageBytes: base64Data,
+                    mimeType: ctxImageFile.type,
+                };
+            }
+
+            const promptAdditions = [
+                `${ctxAiMode} style`,
+                `with ${ctxCharacterStyle} characters`,
+                `aspect ratio ${ctxAspect}`,
+                `${ctxDuration} seconds long`,
+                `${ctxResolution} resolution`,
+                ctxEnableAudio ? 'with cinematic audio and sound effects' : 'silent',
+            ];
+
+            const fullPrompt = `${ctxPrompt}. ${promptAdditions.join(', ')}.`;
+
+            setStatusMessage('Sending request to VEO model...');
+            let operation = await ai.models.generateVideos({
+                model: ctxModelId,
+                prompt: fullPrompt,
+                image: imagePayload,
+                config: { numberOfVideos: 1 }
+            });
+
+            setStatusMessage('Video generation started. This can take a few minutes...');
+            let pollCount = 0;
+            while (!operation.done) {
+                pollCount++;
+                setStatusMessage(`Polling for results (Attempt ${pollCount})... Please be patient.`);
+                await wait(10000);
+                operation = await ai.operations.getVideosOperation({ operation });
+            }
+
+            if (operation.error) {
+                throw new Error(String(operation.error.message) || 'An error occurred during video processing on the server.');
+            }
+
+            const uri = operation.response?.generatedVideos?.[0]?.video?.uri;
+            if (!uri) {
+                throw new Error('Video generation finished, but no video URL was returned.');
+            }
+
+            setStatusMessage('Video generated! Fetching video data...');
+            const videoResponse = await fetch(`${uri}&key=${ctxApiKey}`);
+            if (!videoResponse.ok) {
+                throw new Error(`Failed to download video: ${videoResponse.statusText}`);
+            }
+
+            const videoBlob = await videoResponse.blob();
+            const videoUrl = URL.createObjectURL(videoBlob);
+            setGeneratedVideoUrl(videoUrl);
+            setStatusMessage('Done!');
+            try { trackEvent('generate_video_success', { duration_sec: ctxDuration, segmented: false }); } catch {}
+        } catch (err: any) {
+            console.error(err);
+            setError(err?.message || 'An unknown error occurred during video generation.');
+            try { trackEvent('generate_video_error', { message: String(err?.message || '').slice(0, 120) }); } catch {}
+            throw err;
+        }
+    };
+
+    const performSegmentGeneration = async (context: SegmentJobInput) => {
+        const { segments: ctxSegments, basePrompt: ctxBasePrompt, aiMode: ctxAiMode, characterStyle: ctxCharacterStyle, aspectRatio: ctxAspectRatio, resolution: ctxResolution, enableAudio: ctxEnableAudio, modelId: ctxModelId, apiKey: ctxApiKey, queueDelayMs: ctxQueueDelayMs } = context;
+        setError(null);
+        try {
+            trackEvent('generate_segments_start', {
+                count: ctxSegments.length,
+                aspect_ratio: ctxAspectRatio,
+                resolution: ctxResolution,
+                enable_audio: ctxEnableAudio,
+                ai_mode: ctxAiMode,
+                character_style: ctxCharacterStyle,
+            });
+        } catch {}
+
+        try {
+            const ai = new GoogleGenAI({ apiKey: ctxApiKey });
+            let previousUrl: string | null = null;
+            for (let i = 0; i < ctxSegments.length; i++) {
+                const seg = ctxSegments[i];
+                setStatusMessage(`Segment ${i + 1}/${ctxSegments.length}: preparing...`);
+                setSegments(prev => prev.map(s => s.id === seg.id ? { ...s, status: 'Processing...' } : s));
+
+                let imagePayload: { imageBytes: string; mimeType: string } | undefined;
+                if (seg.continuity === 'last_frame' && previousUrl) {
+                    setStatusMessage('Extracting last frame from previous segment...');
+                    imagePayload = await extractLastFrameBase64(previousUrl);
+                } else if (seg.continuity === 'upload' && seg.imageFile) {
+                    setStatusMessage('Processing reference image...');
+                    const base64Data = await fileToBase64(seg.imageFile);
+                    imagePayload = { imageBytes: base64Data, mimeType: seg.imageFile.type };
+                }
+
+                const additions = [
+                    `${ctxAiMode} style`,
+                    `with ${ctxCharacterStyle} characters`,
+                    `aspect ratio ${ctxAspectRatio}`,
+                    `${seg.duration} seconds long`,
+                    `${ctxResolution} resolution`,
+                    ctxEnableAudio ? 'with cinematic audio and sound effects' : 'silent',
+                ];
+                const fullPrompt = `${seg.prompt || ctxBasePrompt}. ${additions.join(', ')}.`;
+
+                setStatusMessage('Sending request to VEO model...');
+                let operation = await ai.models.generateVideos({
+                    model: ctxModelId,
+                    prompt: fullPrompt,
+                    image: imagePayload,
+                    config: { numberOfVideos: 1 }
+                });
+
+                setStatusMessage('Video generation started...');
+                let pollCount = 0;
+                while (!operation.done) {
+                    pollCount++;
+                    setSegments(prev => prev.map(s => s.id === seg.id ? { ...s, status: `Polling (${pollCount})...` } : s));
+                    await wait(10000);
+                    operation = await ai.operations.getVideosOperation({ operation });
+                }
+
+                if (operation.error) {
+                    throw new Error(String(operation.error.message) || 'An error occurred during segment processing.');
+                }
+
+                const uri = operation.response?.generatedVideos?.[0]?.video?.uri;
+                if (!uri) {
+                    throw new Error('Video generation finished, but no URL was returned.');
+                }
+
+                setStatusMessage('Fetching generated video segment...');
+                const videoResponse = await fetch(`${uri}&key=${ctxApiKey}`);
+                if (!videoResponse.ok) {
+                    throw new Error(`Failed to download segment: ${videoResponse.statusText}`);
+                }
+                const blob = await videoResponse.blob();
+                const url = URL.createObjectURL(blob);
+                previousUrl = url;
+
+                let thumb: string | null = null;
+                try {
+                    const frame = await extractLastFrameBase64(url);
+                    thumb = `data:${frame.mimeType};base64,${frame.imageBytes}`;
+                } catch {}
+                setSegments(prev => prev.map(s => s.id === seg.id ? { ...s, videoUrl: url, status: 'Done', thumbDataUrl: thumb } : s));
+
+                if (i < ctxSegments.length - 1 && ctxQueueDelayMs > 0) {
+                    await countdownDelay(ctxQueueDelayMs, (remaining) => {
+                        if (remaining > 0) {
+                            setStatusMessage(`Waiting ${remaining}s before the next segment...`);
+                        } else {
+                            setStatusMessage('Starting next segment...');
+                        }
+                    });
+                }
+            }
+            setStatusMessage('All segments generated! You can Play All or download each.');
+            try { trackEvent('generate_segments_complete', { count: ctxSegments.length }); } catch {}
+        } catch (err: any) {
+            console.error(err);
+            setError(err?.message || 'An error occurred during segmented generation.');
+            try { trackEvent('generate_segments_error', { message: String(err?.message || '').slice(0, 120) }); } catch {}
+            throw err;
+        }
+    };
+
     const handleGenerateVideo = async () => {
         try {
             trackEvent('generate_video_start', {
@@ -208,192 +456,107 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ apiKey }) => {
                 character_style: characterStyle,
             });
         } catch {}
+
         if (!apiKey) {
             setError('Please enter and save your Gemini API Key in the header.');
             return;
         }
-        if (segmentedMode) {
-            await handleGenerateSegments();
-            return;
-        }
-        if (!prompt) {
-            setError('Please enter a prompt.');
-            return;
-        }
+
         if (useCustomModel && !customModelId.trim()) {
             setError('Please enter a custom model ID or switch to a preset model.');
             return;
         }
-        setIsLoading(true);
-        setError(null);
-        setGeneratedVideoUrl(null);
-        setStatusMessage('Initializing video generation...');
-        
-        try {
-            const ai = new GoogleGenAI({ apiKey });
-            
-            let imagePayload;
-            if (imageFile) {
-                setStatusMessage('Processing reference image...');
-                const base64Data = await fileToBase64(imageFile);
-                imagePayload = {
-                    imageBytes: base64Data,
-                    mimeType: imageFile.type,
-                };
-            }
-            
-            const promptAdditions = [
-                `${aiMode} style`,
-                `with ${characterStyle} characters`,
-                `aspect ratio ${aspectRatio}`,
-                `${duration} seconds long`,
-                `${resolution} resolution`,
-                enableAudio ? 'with cinematic audio and sound effects' : 'silent',
-            ];
 
-            const fullPrompt = `${prompt}. ${promptAdditions.join(', ')}.`;
+        const modelId = useCustomModel && customModelId.trim() ? customModelId.trim() : videoModel;
+        const jobDescription = segmentedMode ? `Segmented video (${segments.length})` : 'Single video';
 
-            setStatusMessage('Sending request to VEO model...');
-            const modelId = useCustomModel && customModelId.trim() ? customModelId.trim() : videoModel;
-            let operation = await ai.models.generateVideos({
-              model: modelId,
-              prompt: fullPrompt,
-              image: imagePayload,
-              config: {
-                numberOfVideos: 1
-              }
-            });
-            
-            setStatusMessage('Video generation started. This can take a few minutes...');
-            let pollCount = 0;
-            while (!operation.done) {
-              pollCount++;
-              setStatusMessage(`Polling for results (Attempt ${pollCount})... Please be patient.`);
-              await new Promise(resolve => setTimeout(resolve, 10000));
-              operation = await ai.operations.getVideosOperation({operation: operation});
-            }
-            
-            if (operation.error) {
-                throw new Error(String(operation.error.message) || 'An error occurred during video processing on the server.');
+        if (segmentedMode) {
+            if (segments.length === 0) {
+                setError('Please add at least one segment.');
+                return;
             }
 
-            if (!operation.response?.generatedVideos?.[0]?.video?.uri) {
-                throw new Error('Video generation finished, but no video URL was returned.');
+            const initialSegments = segments.map(seg => ({
+                ...seg,
+                videoUrl: null,
+                error: null,
+                status: 'Queued...'
+            }));
+
+            setSegments(initialSegments);
+            setGeneratedVideoUrl(null);
+            setError(null);
+
+            const jobSegments = initialSegments.map(seg => ({ ...seg }));
+
+            const job = videoQueue.enqueue(
+                () => performSegmentGeneration({
+                    segments: jobSegments,
+                    basePrompt: prompt,
+                    aiMode,
+                    characterStyle,
+                    aspectRatio,
+                    resolution,
+                    enableAudio,
+                    modelId,
+                    apiKey,
+                    queueDelayMs,
+                }),
+                { description: jobDescription }
+            );
+
+            setIsLoading(true);
+            setActiveQueueJobId(job.id);
+            setStatusMessage('Queued — waiting to start...');
+
+            try {
+                await job.promise;
+            } catch (_) {
+                // Errors handled inside performSegmentGeneration.
+            } finally {
+                setIsLoading(false);
+                setActiveQueueJobId(null);
             }
-
-            setStatusMessage('Video generated! Fetching video data...');
-            const downloadLink = operation.response.generatedVideos[0].video.uri;
-            const videoResponse = await fetch(`${downloadLink}&key=${apiKey}`);
-            
-            if (!videoResponse.ok) {
-                throw new Error(`Failed to download video: ${videoResponse.statusText}`);
-            }
-
-            const videoBlob = await videoResponse.blob();
-            const videoUrl = URL.createObjectURL(videoBlob);
-            setGeneratedVideoUrl(videoUrl);
-            setStatusMessage('Done!');
-            try { trackEvent('generate_video_success', { duration_sec: duration, segmented: false }); } catch {}
-
-        } catch (err: any) {
-            console.error(err);
-            setError(err.message || 'An unknown error occurred during video generation.');
-            try { trackEvent('generate_video_error', { message: String(err?.message || '').slice(0, 120) }); } catch {}
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const handleGenerateSegments = async () => {
-        if (segments.length === 0) {
-            setError('Please add at least one segment.');
             return;
         }
-        setIsLoading(true);
-        setError(null);
+
+        if (!prompt) {
+            setError('Please enter a prompt.');
+            return;
+        }
+
         setGeneratedVideoUrl(null);
-        setSegments(prev => prev.map(s => ({ ...s, videoUrl: null, error: null, status: 'Queued...' })));
+        setError(null);
+
+        const singleContext: SingleVideoJobInput = {
+            prompt,
+            duration,
+            aspectRatio,
+            resolution,
+            enableAudio,
+            aiMode,
+            characterStyle,
+            imageFile,
+            modelId,
+            apiKey,
+        };
+
+        const job = videoQueue.enqueue(
+            () => performSingleVideoGeneration(singleContext),
+            { description: jobDescription }
+        );
+
+        setIsLoading(true);
+        setActiveQueueJobId(job.id);
+        setStatusMessage('Queued — waiting to start...');
+
         try {
-            trackEvent('generate_segments_start', {
-                count: segments.length,
-                aspect_ratio: aspectRatio,
-                resolution,
-                enable_audio: enableAudio,
-                ai_mode: aiMode,
-                character_style: characterStyle,
-            });
-        } catch {}
-        try {
-            const ai = new GoogleGenAI({ apiKey });
-            let previousUrl: string | null = null;
-            for (let i = 0; i < segments.length; i++) {
-                const seg = segments[i];
-                setStatusMessage(`Segment ${i + 1}/${segments.length}: preparing...`);
-                setSegments(prev => prev.map(s => s.id === seg.id ? { ...s, status: 'Processing...' } : s));
-
-                let imagePayload: { imageBytes: string; mimeType: string } | undefined;
-                if (seg.continuity === 'last_frame' && previousUrl) {
-                    setStatusMessage(`Extracting last frame from previous segment...`);
-                    imagePayload = await extractLastFrameBase64(previousUrl);
-                } else if (seg.continuity === 'upload' && seg.imageFile) {
-                    setStatusMessage('Processing reference image...');
-                    const base64Data = await fileToBase64(seg.imageFile);
-                    imagePayload = { imageBytes: base64Data, mimeType: seg.imageFile.type };
-                }
-
-                const additions = [
-                    `${aiMode} style`,
-                    `with ${characterStyle} characters`,
-                    `aspect ratio ${aspectRatio}`,
-                    `${seg.duration} seconds long`,
-                    `${resolution} resolution`,
-                    enableAudio ? 'with cinematic audio and sound effects' : 'silent',
-                ];
-                const fullPrompt = `${seg.prompt || prompt}. ${additions.join(', ')}.`;
-
-                setStatusMessage('Sending request to VEO model...');
-                const modelId = useCustomModel && customModelId.trim() ? customModelId.trim() : videoModel;
-                let operation = await ai.models.generateVideos({
-                    model: modelId,
-                    prompt: fullPrompt,
-                    image: imagePayload,
-                    config: { numberOfVideos: 1 }
-                });
-
-                setStatusMessage('Video generation started...');
-                let pollCount = 0;
-                while (!operation.done) {
-                    pollCount++;
-                    setSegments(prev => prev.map(s => s.id === seg.id ? { ...s, status: `Polling (${pollCount})...` } : s));
-                    await new Promise(r => setTimeout(r, 10000));
-                    operation = await ai.operations.getVideosOperation({ operation });
-                }
-                if (operation.error) throw new Error(String(operation.error.message));
-                const uri = operation.response?.generatedVideos?.[0]?.video?.uri;
-                if (!uri) throw new Error('Video generation finished, but no URL was returned.');
-
-                setStatusMessage('Fetching generated video segment...');
-                const videoResponse = await fetch(`${uri}&key=${apiKey}`);
-                if (!videoResponse.ok) throw new Error(`Failed to download segment: ${videoResponse.statusText}`);
-                const blob = await videoResponse.blob();
-                const url = URL.createObjectURL(blob);
-                previousUrl = url;
-                // Extract a small thumbnail from first frame
-                let thumb: string | null = null;
-                try {
-                    const frame = await extractLastFrameBase64(url); // reuse extractor (last frame ok for preview)
-                    thumb = `data:${frame.mimeType};base64,${frame.imageBytes}`;
-                } catch {}
-                setSegments(prev => prev.map(s => s.id === seg.id ? { ...s, videoUrl: url, status: 'Done', thumbDataUrl: thumb } : s));
-            }
-            setStatusMessage('All segments generated! You can Play All or download each.');
-            try { trackEvent('generate_segments_complete', { count: segments.length }); } catch {}
-        } catch (err: any) {
-            console.error(err);
-            setError(err.message || 'An error occurred during segmented generation.');
-            try { trackEvent('generate_segments_error', { message: String(err?.message || '').slice(0, 120) }); } catch {}
+            await job.promise;
+        } catch (_) {
+            // Errors handled in performSingleVideoGeneration.
         } finally {
             setIsLoading(false);
+            setActiveQueueJobId(null);
         }
     };
 

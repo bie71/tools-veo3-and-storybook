@@ -19,6 +19,15 @@ View your app in AI Studio: https://ai.studio/apps/drive/1Q9VYj7_EWQY6mI_cEAG8lO
 3. Run the app:
    `npm run dev`
 
+## Request Queues
+
+- Video, image, and storybook generation now run through built-in queues so each feature issues one API request at a time.
+- Every queue enforces a configurable cool-down before the next job starts, and the UI surfaces queue positions plus live countdowns.
+- Configure the delays (milliseconds) in your `.env*` files or Compose overrides:
+  - `VITE_VIDEO_QUEUE_DELAY_MS` (default 5000)
+  - `VITE_IMAGE_QUEUE_DELAY_MS` (default 4000)
+  - `VITE_STORY_QUEUE_DELAY_MS` (default 5000)
+
 ## Analytics (GA4)
 
 This app sends analytics events to Google Analytics 4 (GA4).
@@ -70,3 +79,4 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d web
 
 Notes
 - Vite embeds `VITE_*` envs at build time. Changing `VITE_GA_MEASUREMENT_ID` requires rebuilding the image.
+- Adjust `VITE_VIDEO_QUEUE_DELAY_MS`, `VITE_IMAGE_QUEUE_DELAY_MS`, and `VITE_STORY_QUEUE_DELAY_MS` to change the enforced delays before building.

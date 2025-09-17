@@ -3,6 +3,7 @@ import InputGroup from './InputGroup';
 import { LoaderIcon, TrashIcon } from './icons';
 import { GoogleGenAI, PersonGeneration, RawReferenceImage, Modality } from '@google/genai';
 import { trackEvent } from '../analytics';
+import { RequestQueue, QueueSnapshot } from '../lib/requestQueue';
 
 interface ImageGeneratorProps {
   apiKey: string;
@@ -29,6 +30,26 @@ const IMAGE_SIZES = [
 const STYLE_PRESETS = ['Default', 'Photorealistic', 'Illustration', 'Anime', 'Cinematic', '3D', 'Pixel', 'Banana'] as const;
 const GEMINI_TEXT_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro'];
 
+type StylePreset = typeof STYLE_PRESETS[number] | '__custom__';
+
+interface ImageJobInput {
+  apiKey: string;
+  prompt: string;
+  technique: string;
+  modelId: string;
+  stylePreset: StylePreset;
+  customStyle: string;
+  size: string;
+  count: number;
+  aspectRatio: string;
+  outputMimeType: 'image/png' | 'image/jpeg';
+  includeRaiReason: boolean;
+  personGen: 'Unspecified' | 'Allow Adult';
+  useEnhancedPrompt: boolean;
+  boostedPrompt: string;
+  refImages: File[];
+}
+
 const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.readAsDataURL(file);
@@ -47,7 +68,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ apiKey }) => {
   const [autoDetected, setAutoDetected] = useState<boolean>(false);
   const [useCustomModel, setUseCustomModel] = useState(false);
   const [customModelId, setCustomModelId] = useState('');
-  const [stylePreset, setStylePreset] = useState<string>(STYLE_PRESETS[0]);
+  const [stylePreset, setStylePreset] = useState<StylePreset>(STYLE_PRESETS[0]);
   const [customStyle, setCustomStyle] = useState<string>('');
   const [size, setSize] = useState<string>('1024x1024');
   const [count, setCount] = useState<number>(1);
@@ -68,6 +89,35 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ apiKey }) => {
   const [status, setStatus] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<string[]>([]);
+
+  const imageQueueDelayRaw = Number(import.meta.env.VITE_IMAGE_QUEUE_DELAY_MS ?? '5000');
+  const imageQueueDelay = Number.isFinite(imageQueueDelayRaw) && imageQueueDelayRaw >= 0 ? imageQueueDelayRaw : 5000;
+  const imageQueue = React.useMemo(() => new RequestQueue(imageQueueDelay), [imageQueueDelay]);
+  const [queueSnapshot, setQueueSnapshot] = useState<QueueSnapshot>(imageQueue.snapshot());
+  const [activeQueueJobId, setActiveQueueJobId] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    const unsubscribe = imageQueue.subscribe(setQueueSnapshot);
+    return unsubscribe;
+  }, [imageQueue]);
+
+  React.useEffect(() => {
+    if (!activeQueueJobId) return;
+    const { activeTaskId, queuedIds, delayRemainingMs } = queueSnapshot;
+    if (activeTaskId === activeQueueJobId) return;
+    const position = queuedIds.indexOf(activeQueueJobId);
+    if (position === -1) return;
+    if (position === 0) {
+      if (typeof delayRemainingMs === 'number') {
+        const seconds = Math.max(0, Math.ceil(delayRemainingMs / 1000));
+        setStatus(`Queued — starting in ${seconds}s`);
+      } else {
+        setStatus('Queued — waiting to start...');
+      }
+    } else {
+      setStatus(`Queued — ${position} request${position === 1 ? '' : 's'} ahead...`);
+    }
+  }, [queueSnapshot, activeQueueJobId]);
 
   const modelId = useMemo(() => (useCustomModel && customModelId.trim() ? customModelId.trim() : imageModel), [useCustomModel, customModelId, imageModel]);
 
@@ -183,6 +233,218 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ apiKey }) => {
     e.target.value = '';
   };
 
+  const performImageGeneration = async (context: ImageJobInput) => {
+    const {
+      apiKey: ctxApiKey,
+      prompt: ctxPrompt,
+      technique: ctxTechnique,
+      modelId: ctxModelId,
+      stylePreset: ctxStylePreset,
+      customStyle: ctxCustomStyle,
+      size: ctxSize,
+      count: ctxCount,
+      aspectRatio: ctxAspectRatio,
+      outputMimeType: ctxOutputMimeType,
+      includeRaiReason: ctxIncludeRaiReason,
+      personGen: ctxPersonGen,
+      useEnhancedPrompt: ctxUseEnhancedPrompt,
+      boostedPrompt: ctxBoostedPrompt,
+      refImages: ctxRefImages,
+    } = context;
+
+    setImages([]);
+    setError(null);
+    setStatus('Preparing request...');
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: ctxApiKey });
+
+      let finalPrompt = ctxPrompt;
+      if (ctxUseEnhancedPrompt) {
+        if (!ctxBoostedPrompt.trim()) {
+          throw new Error('Enhanced prompt is empty. Click "Enhance Prompt" first or disable "Use enhanced".');
+        }
+        finalPrompt = ctxBoostedPrompt;
+      }
+
+      let imagePayloads: { imageBytes: string; mimeType: string }[] = [];
+      if ((ctxTechnique === 'Image to Image' || ctxTechnique === 'Photo Edit (Gemini 2.5)') && ctxRefImages.length) {
+        setStatus('Processing reference image(s)...');
+        imagePayloads = [];
+        for (const file of ctxRefImages) {
+          const base64 = await fileToBase64(file);
+          imagePayloads.push({ imageBytes: base64, mimeType: file.type });
+        }
+      }
+
+      const additions: string[] = [];
+      if (ctxStylePreset === '__custom__') {
+        if (ctxCustomStyle.trim()) additions.push(`${ctxCustomStyle.trim()} style`);
+      } else if (ctxStylePreset && ctxStylePreset !== 'Default') {
+        additions.push(`${ctxStylePreset} style`);
+      }
+      if (ctxSize) additions.push(`target size ${ctxSize}`);
+
+      const fullPrompt = additions.length ? `${finalPrompt}. ${additions.join(', ')}.` : finalPrompt;
+
+      setStatus('Requesting image generation...');
+      let operation: any;
+      try {
+        if (ctxTechnique === 'Photo Edit (Gemini 2.5)') {
+          if (!imagePayloads.length) { throw new Error('Please upload at least one reference image for Photo Edit.'); }
+          const gc = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image-preview',
+            contents: {
+              parts: [
+                ...imagePayloads.map(p => ({ inlineData: { data: p.imageBytes, mimeType: p.mimeType } })),
+                { text: fullPrompt }
+              ]
+            },
+            config: { responseModalities: [Modality.IMAGE, Modality.TEXT] }
+          });
+          const out: string[] = [];
+          const dataStr = (gc as any).data as string | undefined;
+          if (dataStr) {
+            out.push(`data:${ctxOutputMimeType};base64,${dataStr}`);
+          } else if (Array.isArray((gc as any).candidates) && (gc as any).candidates.length) {
+            const parts = (gc as any).candidates[0]?.content?.parts || [];
+            for (const p of parts) {
+              if (p?.inlineData?.data) {
+                const mt = p?.inlineData?.mimeType || ctxOutputMimeType || 'image/jpeg';
+                out.push(`data:${mt};base64,${p.inlineData.data}`);
+              }
+            }
+          }
+          if (!out.length) throw new Error('No image returned by Gemini Photo Edit.');
+          setImages(out);
+          setStatus('Done');
+          try { trackEvent('generate_image_success', { count: out.length, mode: 'gemini_edit' }); } catch {}
+          return;
+        } else if (ctxTechnique === 'Image to Image' && imagePayloads.length) {
+          const refs: any[] = [];
+          for (const payload of imagePayloads) {
+            const ref = new RawReferenceImage();
+            (ref as any).referenceImage = payload;
+            refs.push(ref);
+          }
+          operation = await ai.models.editImage({
+            model: ctxModelId,
+            prompt: fullPrompt,
+            referenceImages: refs,
+            config: {
+              numberOfImages: Math.max(1, Math.min(4, ctxCount)),
+              aspectRatio: ctxAspectRatio,
+              personGeneration: ctxPersonGen === 'Allow Adult' ? PersonGeneration.ALLOW_ADULT : undefined,
+              outputMimeType: ctxOutputMimeType,
+              includeRaiReason: ctxIncludeRaiReason,
+            }
+          });
+        } else {
+          operation = await ai.models.generateImages({
+            model: ctxModelId,
+            prompt: fullPrompt,
+            config: {
+              numberOfImages: Math.max(1, Math.min(4, ctxCount)),
+              aspectRatio: ctxAspectRatio,
+              personGeneration: ctxPersonGen === 'Allow Adult' ? PersonGeneration.ALLOW_ADULT : undefined,
+              outputMimeType: ctxOutputMimeType,
+              includeRaiReason: ctxIncludeRaiReason,
+            }
+          });
+        }
+      } catch (err: any) {
+        const msg = String(err?.message || err || '');
+        const canFallbackFast = /not[_\s-]?found|404/i.test(msg) && /-fast-generate-001$/i.test(ctxModelId);
+        if (canFallbackFast) {
+          const fallbackModel = ctxModelId.replace(/-fast-generate-001$/i, '-generate-001');
+          try {
+            setStatus(`Model not found. Retrying with ${fallbackModel}...`);
+            try { trackEvent('generate_image_fallback', { from: ctxModelId, to: fallbackModel }); } catch {}
+            if (ctxTechnique === 'Image to Image' && imagePayloads.length) {
+              const refs2: any[] = [];
+              for (const payload of imagePayloads) {
+                const ref = new RawReferenceImage();
+                (ref as any).referenceImage = payload;
+                refs2.push(ref);
+              }
+              operation = await ai.models.editImage({
+                model: fallbackModel,
+                prompt: fullPrompt,
+                referenceImages: refs2,
+                config: {
+                  numberOfImages: Math.max(1, Math.min(4, ctxCount)),
+                  aspectRatio: ctxAspectRatio,
+                  personGeneration: ctxPersonGen === 'Allow Adult' ? PersonGeneration.ALLOW_ADULT : undefined,
+                  outputMimeType: ctxOutputMimeType,
+                  includeRaiReason: ctxIncludeRaiReason,
+                }
+              });
+            } else {
+              operation = await ai.models.generateImages({
+                model: fallbackModel,
+                prompt: fullPrompt,
+                config: {
+                  numberOfImages: Math.max(1, Math.min(4, ctxCount)),
+                  aspectRatio: ctxAspectRatio,
+                  personGeneration: ctxPersonGen === 'Allow Adult' ? PersonGeneration.ALLOW_ADULT : undefined,
+                  outputMimeType: ctxOutputMimeType,
+                  includeRaiReason: ctxIncludeRaiReason,
+                }
+              });
+            }
+          } catch (_) {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
+
+      if ((operation as any).error) {
+        throw new Error(String((operation as any).error?.message || 'Image generation error'));
+      }
+
+      const imgs = (operation as any).response?.generatedImages || (operation as any).generatedImages;
+      if (!imgs || !imgs.length) {
+        throw new Error('No images returned by the model.');
+      }
+
+      setStatus('Preparing images...');
+      const urls: string[] = [];
+      for (const item of imgs) {
+        const img = item?.image || {};
+        const bytes = img?.imageBytes as string | undefined;
+        const uri: string | undefined = img?.uri || (item as any)?.uri;
+        if (bytes) {
+          const mime = img?.mimeType || ctxOutputMimeType || 'image/png';
+          urls.push(`data:${mime};base64,${bytes}`);
+          continue;
+        }
+        if (!uri) continue;
+        const response = await fetch(`${uri}&key=${ctxApiKey}`);
+        if (!response.ok) {
+          throw new Error(`Failed to download image: ${response.statusText}`);
+        }
+        const blob = await response.blob();
+        const dataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(blob);
+        });
+        urls.push(dataUrl);
+      }
+
+      setImages(urls);
+      setStatus('Done');
+      try { trackEvent('generate_image_success', { count: urls.length, mode: ctxTechnique.toLowerCase().replace(/\s+/g, '_') }); } catch {}
+    } catch (err: any) {
+      const msg = String(err?.message || err || 'An unknown error occurred during image generation.');
+      setError(msg);
+      try { trackEvent('generate_image_error', { message: msg.slice(0, 120) }); } catch {}
+      throw err;
+    }
+  };
+
   const detectAvailableModels = async (): Promise<string[] | null> => {
     if (!apiKey) { setError('Please enter and save your Gemini API Key in the header.'); return; }
     setIsListingModels(true);
@@ -283,6 +545,9 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ apiKey }) => {
     try { trackEvent('image_reference_clear_all'); } catch {}
   };
 
+
+
+
   const handleGenerateImages = async () => {
     try {
       trackEvent('generate_image_start', {
@@ -298,7 +563,6 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ apiKey }) => {
     if (!prompt.trim()) { setError('Please enter a prompt.'); return; }
     if (useCustomModel && !customModelId.trim()) { setError('Enter a custom model ID or disable custom.'); return; }
 
-    // If we have a detected list and the chosen preset is not available, block to prevent 404
     if (!useCustomModel && Array.isArray(availableModels) && availableModels.length && !availableModels.includes(imageModel)) {
       const msg = `Selected model "${imageModel}" is not in your detected models. Click "Detect Models" and choose a listed model.`;
       setError(msg);
@@ -306,196 +570,44 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ apiKey }) => {
       return;
     }
 
-    // Decide which prompt to use based on the toggle
-    let finalPrompt = prompt;
-    if (useEnhancedForGeneration) {
-      if (!boostedPrompt.trim()) {
-        setError('Enhanced prompt is empty. Click "Enhance Prompt" first or disable "Use enhanced".');
-        return;
-      }
-      finalPrompt = boostedPrompt;
+    if (useEnhancedForGeneration && !boostedPrompt.trim()) {
+      setError('Enhanced prompt is empty. Click "Enhance Prompt" first or disable "Use enhanced".');
+      return;
     }
+
+    const jobContext: ImageJobInput = {
+      apiKey,
+      prompt,
+      technique,
+      modelId,
+      stylePreset: stylePreset as StylePreset,
+      customStyle,
+      size,
+      count,
+      aspectRatio,
+      outputMimeType,
+      includeRaiReason,
+      personGen,
+      useEnhancedPrompt: useEnhancedForGeneration,
+      boostedPrompt,
+      refImages: Array.from(refImages),
+    };
 
     setIsLoading(true);
     setError(null);
     setImages([]);
-    setStatus('Preparing request...');
+    setStatus('Queued — waiting to start...');
+
+    const job = imageQueue.enqueue(() => performImageGeneration(jobContext), { description: 'Image generation' });
+    setActiveQueueJobId(job.id);
 
     try {
-      const ai = new GoogleGenAI({ apiKey });
-
-      let imagePayloads: { imageBytes: string; mimeType: string }[] = [];
-      if ((technique === 'Image to Image' || technique === 'Photo Edit (Gemini 2.5)') && refImages.length) {
-        setStatus('Processing reference image(s)...');
-        for (const f of refImages) {
-          const base64 = await fileToBase64(f);
-          imagePayloads.push({ imageBytes: base64, mimeType: f.type });
-        }
-      }
-
-      const additions: string[] = [];
-      if (stylePreset === '__custom__') {
-        if (customStyle.trim()) additions.push(`${customStyle.trim()} style`);
-      } else if (stylePreset && stylePreset !== 'Default') {
-        additions.push(`${stylePreset} style`);
-      }
-      if (size) additions.push(`target size ${size}`);
-
-      const fullPrompt = additions.length ? `${finalPrompt}. ${additions.join(', ')}.` : finalPrompt;
-
-      setStatus('Requesting image generation...');
-      let operation: any;
-      try {
-        if (technique === 'Photo Edit (Gemini 2.5)') {
-          if (!imagePayloads.length) { throw new Error('Please upload at least one reference image for Photo Edit.'); }
-          const gc = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image-preview',
-            contents: {
-              parts: [
-                ...imagePayloads.map(p => ({ inlineData: { data: p.imageBytes, mimeType: p.mimeType } })),
-                { text: fullPrompt }
-              ]
-            },
-            config: { responseModalities: [Modality.IMAGE, Modality.TEXT] }
-          });
-          const out: string[] = [];
-          const dataStr = (gc as any).data as string | undefined;
-          if (dataStr) {
-            out.push(`data:${outputMimeType};base64,${dataStr}`);
-          } else if (Array.isArray((gc as any).candidates) && (gc as any).candidates.length) {
-            const parts = (gc as any).candidates[0]?.content?.parts || [];
-            for (const p of parts) {
-              if (p?.inlineData?.data) {
-                const mt = p?.inlineData?.mimeType || outputMimeType || 'image/jpeg';
-                out.push(`data:${mt};base64,${p.inlineData.data}`);
-              }
-            }
-          }
-          if (!out.length) throw new Error('No image returned by Gemini Photo Edit.');
-          setImages(out);
-          setStatus('Done');
-          try { trackEvent('generate_image_success', { count: out.length, mode: 'gemini_edit' }); } catch {}
-          return;
-        } else if (technique === 'Image to Image' && imagePayloads.length) {
-          // Use editImage API for image-to-image workflows
-          const refs: any[] = [];
-          for (const p of imagePayloads) {
-            const r = new RawReferenceImage();
-            (r as any).referenceImage = p;
-            refs.push(r);
-          }
-          operation = await ai.models.editImage({
-            model: modelId,
-            prompt: fullPrompt,
-            referenceImages: refs,
-            config: {
-              numberOfImages: Math.max(1, Math.min(4, count)),
-              aspectRatio,
-              personGeneration: personGen === 'Allow Adult' ? PersonGeneration.ALLOW_ADULT : undefined,
-              outputMimeType,
-              includeRaiReason,
-            }
-          });
-        } else {
-          // Text-to-image
-          operation = await ai.models.generateImages({
-            model: modelId,
-            prompt: fullPrompt,
-            config: {
-              numberOfImages: Math.max(1, Math.min(4, count)),
-              aspectRatio,
-              personGeneration: personGen === 'Allow Adult' ? PersonGeneration.ALLOW_ADULT : undefined,
-              outputMimeType,
-              includeRaiReason,
-            }
-          });
-        }
-      } catch (err: any) {
-        const msg = String(err?.message || err || '');
-        const canFallbackFast = /not[_\s-]?found|404/i.test(msg) && /-fast-generate-001$/i.test(modelId);
-        if (canFallbackFast) {
-          const fallbackModel = modelId.replace(/-fast-generate-001$/i, '-generate-001');
-          try {
-            setStatus(`Model not found. Retrying with ${fallbackModel}...`);
-            try { trackEvent('generate_image_fallback', { from: modelId, to: fallbackModel }); } catch {}
-            if (technique === 'Image to Image' && imagePayloads.length) {
-              const refs2: any[] = [];
-              for (const p of imagePayloads) {
-                const r = new RawReferenceImage();
-                (r as any).referenceImage = p;
-                refs2.push(r);
-              }
-              operation = await ai.models.editImage({
-                model: fallbackModel,
-                prompt: fullPrompt,
-                referenceImages: refs2,
-                config: {
-                  numberOfImages: Math.max(1, Math.min(4, count)),
-                  aspectRatio,
-                  personGeneration: personGen === 'Allow Adult' ? PersonGeneration.ALLOW_ADULT : undefined,
-                  outputMimeType,
-                  includeRaiReason,
-                }
-              });
-            } else {
-              operation = await ai.models.generateImages({
-                model: fallbackModel,
-                prompt: fullPrompt,
-                config: {
-                  numberOfImages: Math.max(1, Math.min(4, count)),
-                  aspectRatio,
-                  personGeneration: personGen === 'Allow Adult' ? PersonGeneration.ALLOW_ADULT : undefined,
-                  outputMimeType,
-                  includeRaiReason,
-                }
-              });
-            }
-          } catch (err2) {
-            throw err; // bubble original error if fallback fails
-          }
-        } else {
-          throw err;
-        }
-      }
-
-      // Some image models return URIs directly without long polling
-      if ((operation as any).error) {
-        throw new Error(String((operation as any).error?.message || 'Image generation error'));
-      }
-
-      const imgs = (operation as any).response?.generatedImages || (operation as any).generatedImages;
-      if (!imgs || !imgs.length) {
-        throw new Error('No images returned by the model.');
-      }
-
-      setStatus('Preparing images...');
-      const urls: string[] = [];
-      for (const item of imgs) {
-        const img = item?.image || {};
-        const bytes = img?.imageBytes as string | undefined;
-        const uri: string | undefined = img?.uri || (item as any)?.uri;
-        if (bytes) {
-          const mime = img?.mimeType || outputMimeType || 'image/png';
-          urls.push(`data:${mime};base64,${bytes}`);
-          continue;
-        }
-        if (uri) {
-          const resp = await fetch(`${uri}&key=${apiKey}`);
-          if (!resp.ok) throw new Error(`Failed to fetch image: ${resp.statusText}`);
-          const blob = await resp.blob();
-          urls.push(URL.createObjectURL(blob));
-          continue;
-        }
-      }
-      setImages(urls);
-      setStatus('Done');
-      try { trackEvent('generate_image_success', { count: urls.length }); } catch {}
-    } catch (e: any) {
-      console.error(e);
-      setError(e?.message || 'Failed to generate images.');
-      try { trackEvent('generate_image_error', { message: String(e?.message || '').slice(0, 120) }); } catch {}
+      await job.promise;
+    } catch (_) {
+      // Errors handled within performImageGeneration.
     } finally {
       setIsLoading(false);
+      setActiveQueueJobId(null);
     }
   };
 

@@ -5,9 +5,17 @@ import { LoaderIcon, BookOpenIcon } from './icons';
 import { STORYBOOK_AGES, STORYBOOK_ART_STYLES } from '../constants';
 import { StoryPage } from '../types';
 import { trackEvent } from '../analytics';
+import { RequestQueue, QueueSnapshot } from '../lib/requestQueue';
 
 interface StorybookBuilderProps {
     apiKey: string;
+}
+
+interface StoryJobInput {
+    apiKey: string;
+    prompt: string;
+    ageGroup: string;
+    artStyle: string;
 }
 
 const StorybookBuilder: React.FC<StorybookBuilderProps> = ({ apiKey }) => {
@@ -20,28 +28,48 @@ const StorybookBuilder: React.FC<StorybookBuilderProps> = ({ apiKey }) => {
     const [error, setError] = useState<string | null>(null);
     const [storyPages, setStoryPages] = useState<StoryPage[]>([]);
 
-    const handleGenerateStory = async () => {
-        try { trackEvent('generate_story_start', { age_group: ageGroup, art_style: artStyle }); } catch {}
-        if (!apiKey) {
-            setError('Please enter and save your Gemini API Key in the header.');
-            return;
+    const storyQueueDelayRaw = Number(import.meta.env.VITE_STORY_QUEUE_DELAY_MS ?? '5000');
+    const storyQueueDelay = Number.isFinite(storyQueueDelayRaw) && storyQueueDelayRaw >= 0 ? storyQueueDelayRaw : 5000;
+    const storyQueue = React.useMemo(() => new RequestQueue(storyQueueDelay), [storyQueueDelay]);
+    const [queueSnapshot, setQueueSnapshot] = useState<QueueSnapshot>(storyQueue.snapshot());
+    const [activeQueueJobId, setActiveQueueJobId] = useState<string | null>(null);
+
+    React.useEffect(() => {
+        const unsubscribe = storyQueue.subscribe(setQueueSnapshot);
+        return unsubscribe;
+    }, [storyQueue]);
+
+    React.useEffect(() => {
+        if (!activeQueueJobId) return;
+        const { activeTaskId, queuedIds, delayRemainingMs } = queueSnapshot;
+        if (activeTaskId === activeQueueJobId) return;
+        const position = queuedIds.indexOf(activeQueueJobId);
+        if (position === -1) return;
+        if (position === 0) {
+            if (typeof delayRemainingMs === 'number') {
+                const seconds = Math.max(0, Math.ceil(delayRemainingMs / 1000));
+                setStatusMessage(`Queued — starting in ${seconds}s`);
+            } else {
+                setStatusMessage('Queued — waiting to start...');
+            }
+        } else {
+            setStatusMessage(`Queued — ${position} request${position === 1 ? '' : 's'} ahead...`);
         }
-        if (!prompt) {
-            setError('Please enter a story idea.');
-            return;
-        }
-        setIsLoading(true);
+    }, [queueSnapshot, activeQueueJobId]);
+
+
+    const performStoryGeneration = async (context: StoryJobInput) => {
+        const { apiKey: ctxApiKey, prompt: ctxPrompt, ageGroup: ctxAgeGroup, artStyle: ctxArtStyle } = context;
         setError(null);
         setStoryPages([]);
-        
-        try {
-            const ai = new GoogleGenAI({ apiKey });
+        setStatusMessage('Generating story from your idea...');
 
-            // Step 1: Generate the story text and image prompts
-            setStatusMessage('Generating story from your idea...');
+        try {
+            const ai = new GoogleGenAI({ apiKey: ctxApiKey });
+
             const storyTextResponse = await ai.models.generateContent({
                 model: "gemini-2.5-flash",
-                contents: `Create a short, illustrated children's story based on this idea: "${prompt}". The story should be appropriate for children who are ${ageGroup}. The story should be broken into 5 pages. For each page, provide the page text and a detailed, descriptive prompt for an illustrator to create an image in a ${artStyle} style.`,
+                contents: `Create a short, illustrated children's story based on this idea: "${ctxPrompt}". The story should be appropriate for children who are ${ctxAgeGroup}. The story should be broken into 5 pages. For each page, provide the page text and a detailed, descriptive prompt for an illustrator to create an image in a ${ctxArtStyle} style.`,
                 config: {
                     responseMimeType: "application/json",
                     responseSchema: {
@@ -52,14 +80,8 @@ const StorybookBuilder: React.FC<StorybookBuilderProps> = ({ apiKey }) => {
                                 items: {
                                     type: Type.OBJECT,
                                     properties: {
-                                        text: {
-                                            type: Type.STRING,
-                                            description: "The text content for this page of the story."
-                                        },
-                                        image_prompt: {
-                                            type: Type.STRING,
-                                            description: "A detailed prompt for an image generator to create an illustration for this page."
-                                        }
+                                        text: { type: Type.STRING },
+                                        image_prompt: { type: Type.STRING }
                                     },
                                     required: ["text", "image_prompt"]
                                 }
@@ -69,43 +91,88 @@ const StorybookBuilder: React.FC<StorybookBuilderProps> = ({ apiKey }) => {
                     },
                 },
             });
-            
-            const storyData = JSON.parse(storyTextResponse.text);
-            const initialPages: StoryPage[] = storyData.pages.map((p: any) => ({ text: p.text, imagePrompt: p.image_prompt }));
-            setStoryPages(initialPages);
 
-            // Step 2: Generate images for each page
-            const updatedPages: StoryPage[] = [];
-            for (let i = 0; i < initialPages.length; i++) {
-                const page = initialPages[i];
-                setStatusMessage(`Generating image for page ${i + 1} of ${initialPages.length}...`);
-                
+            const storyData = JSON.parse(storyTextResponse.text || '{}');
+            const rawPages = Array.isArray(storyData?.pages) ? storyData.pages : [];
+            if (!rawPages.length) {
+                throw new Error('No story pages returned by Gemini.');
+            }
+
+            const pagesWithImages: StoryPage[] = rawPages.map((p: any) => ({
+                text: String(p?.text || ''),
+                imagePrompt: String(p?.image_prompt || p?.imagePrompt || ''),
+            }));
+            setStoryPages(pagesWithImages.map(p => ({ ...p })));
+
+            const totalPages = pagesWithImages.length;
+            for (let i = 0; i < totalPages; i++) {
+                const page = pagesWithImages[i];
+                setStatusMessage(`Generating image for page ${i + 1} of ${totalPages}...`);
+
                 const imageResponse = await ai.models.generateImages({
                     model: 'imagen-4.0-generate-001',
-                    prompt: `${page.imagePrompt}, in the art style of ${artStyle}.`,
+                    prompt: `${page.imagePrompt}, in the art style of ${ctxArtStyle}.`,
                     config: {
-                      numberOfImages: 1,
-                      outputMimeType: 'image/jpeg',
-                      aspectRatio: '1:1',
+                        numberOfImages: 1,
+                        outputMimeType: 'image/jpeg',
+                        aspectRatio: '1:1',
                     },
                 });
 
-                const base64Image = imageResponse.generatedImages[0].image.imageBytes;
-                const imageUrl = `data:image/jpeg;base64,${base64Image}`;
-                
-                const completedPage: StoryPage = { ...page, imageUrl };
-                updatedPages.push(completedPage);
-                setStoryPages([...updatedPages]); // Update state incrementally
-            }
-            setStatusMessage('Story complete!');
-            try { trackEvent('generate_story_success', { pages: updatedPages.length, art_style: artStyle, age_group: ageGroup }); } catch {}
+                const base64Image = imageResponse?.generatedImages?.[0]?.image?.imageBytes;
+                if (!base64Image) {
+                    throw new Error('No image returned for a story page.');
+                }
 
+                pagesWithImages[i] = { ...page, imageUrl: `data:image/jpeg;base64,${base64Image}` };
+                setStoryPages(pagesWithImages.map(p => ({ ...p })));
+            }
+
+            setStatusMessage('Story complete!');
+            try { trackEvent('generate_story_success', { pages: pagesWithImages.length, art_style: ctxArtStyle, age_group: ctxAgeGroup }); } catch {}
         } catch (err: any) {
             console.error(err);
-            setError(err.message || 'An unknown error occurred during story generation.');
+            const message = err?.message || 'An unknown error occurred during story generation.';
+            setError(message);
             try { trackEvent('generate_story_error', { message: String(err?.message || '').slice(0, 120) }); } catch {}
+            throw err;
+        }
+    };
+
+
+    const handleGenerateStory = async () => {
+        try { trackEvent('generate_story_start', { age_group: ageGroup, art_style: artStyle }); } catch {}
+        if (!apiKey) {
+            setError('Please enter and save your Gemini API Key in the header.');
+            return;
+        }
+        if (!prompt) {
+            setError('Please enter a story idea.');
+            return;
+        }
+
+        const jobContext: StoryJobInput = {
+            apiKey,
+            prompt,
+            ageGroup,
+            artStyle,
+        };
+
+        setIsLoading(true);
+        setError(null);
+        setStoryPages([]);
+        setStatusMessage('Queued — waiting to start...');
+
+        const job = storyQueue.enqueue(() => performStoryGeneration(jobContext), { description: 'Storybook generation' });
+        setActiveQueueJobId(job.id);
+
+        try {
+            await job.promise;
+        } catch (_) {
+            // Errors handled inside performStoryGeneration.
         } finally {
             setIsLoading(false);
+            setActiveQueueJobId(null);
         }
     };
 
